@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -44,12 +45,13 @@ type BackupConfigReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	Log       logr.Logger
+	Clientset *kubernetes.Clientset
 	scheduler *cron.Cron
 	executors map[string]BackupExecutor
 	retention *retention.Manager
 
-	executorFactory func(client.Client, storage.Backend, logr.Logger) BackupExecutor
-	storageFactory  func(ctx context.Context, c client.Client, s3 *v1alpha1.S3Backend, prefix string, log logr.Logger) (storage.Backend, error)
+	executorFactory func(client.Client, *kubernetes.Clientset, storage.Backend, logr.Logger) BackupExecutor
+	storageFactory  func(ctx context.Context, c client.Client, s3 *v1alpha1.S3Backend, namespace, prefix string, log logr.Logger) (storage.Backend, error)
 	now             func() time.Time
 	lastRun         map[string]time.Time
 }
@@ -128,7 +130,7 @@ func (r *BackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, r.Status().Update(ctx, backupConfig)
 		}
 
-		executor := r.executorFactory(r.Client, storageBackend, log)
+		executor := r.executorFactory(r.Client, r.Clientset, storageBackend, log)
 		r.executors[backupConfig.Name] = executor
 	}
 
@@ -156,8 +158,9 @@ func (r *BackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	})
 
 	// Calculate next scheduled time
+	var nextTime time.Time
 	if schedule, err := cron.ParseStandard(backupConfig.Spec.Schedule); err == nil {
-		nextTime := schedule.Next(r.now())
+		nextTime = schedule.Next(r.now())
 		backupConfig.Status.NextScheduledTime = &metav1.Time{Time: nextTime}
 	}
 
@@ -165,8 +168,11 @@ func (r *BackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Requeue after 1 minute to check for scheduled backups
-	return ctrl.Result{RequeueAfter: time.Minute}, nil
+	// Requeue at the next scheduled time
+	if nextTime.IsZero() {
+		return ctrl.Result{}, nil
+	}
+	return ctrl.Result{RequeueAfter: time.Until(nextTime)}, nil
 }
 
 // scheduleBackups schedules backups based on the cron schedule
@@ -240,6 +246,11 @@ func (r *BackupConfigReconciler) createBackup(ctx context.Context, config *v1alp
 			existingItems,
 			now,
 		)
+
+		if retentionPeriod == "" {
+			r.Log.Info("Skipping backup, no retention period matched", "pvc", pvc.Name)
+			continue
+		}
 
 		// Calculate expiration time
 		expiresAt := r.retention.CalculateExpiration(
@@ -384,20 +395,21 @@ func (r *BackupConfigReconciler) applyRetentionPolicy(ctx context.Context, confi
 	}
 
 	// Delete backups that should be removed
-	for _, backup := range toDelete {
+	for i := range toDelete {
+		backupToDelete := toDelete[i]
 		// Delete from object storage
 		if executor, exists := r.executors[config.Name]; exists && executor != nil {
-			if err := executor.DeleteBackupData(ctx, &backup); err != nil {
-				r.Log.Error(err, "Failed to delete backup data from storage", "backup", backup.Name)
+			if err := executor.DeleteBackupData(ctx, &backupToDelete); err != nil {
+				r.Log.Error(err, "Failed to delete backup data from storage", "backup", backupToDelete.Name)
 			}
 		}
 
 		// Delete the backup object
-		if err := r.Delete(ctx, &backup); err != nil {
-			r.Log.Error(err, "Failed to delete backup", "backup", backup.Name)
+		if err := r.Delete(ctx, &backupToDelete); err != nil {
+			r.Log.Error(err, "Failed to delete backup", "backup", backupToDelete.Name)
 			// Continue with other deletions
 		} else {
-			r.Log.Info("Deleted backup", "backup", backup.Name)
+			r.Log.Info("Deleted backup", "backup", backupToDelete.Name)
 		}
 	}
 
@@ -411,7 +423,7 @@ func (r *BackupConfigReconciler) createStorageBackend(ctx context.Context, confi
 		if config.Spec.StorageBackend.S3 == nil {
 			return nil, fmt.Errorf("S3 configuration is required when type is s3")
 		}
-		return r.storageFactory(ctx, r.Client, config.Spec.StorageBackend.S3, config.Spec.StorageBackend.Prefix, r.Log)
+		return r.storageFactory(ctx, r.Client, config.Spec.StorageBackend.S3, config.Namespace, config.Spec.StorageBackend.Prefix, r.Log)
 	default:
 		return nil, fmt.Errorf("unsupported storage backend type: %s", config.Spec.StorageBackend.Type)
 	}
@@ -427,9 +439,15 @@ func (r *BackupConfigReconciler) cleanupBackupConfig(ctx context.Context, config
 		return err
 	}
 
-	for _, backup := range backupList.Items {
-		if err := r.Delete(ctx, &backup); err != nil && !errors.IsNotFound(err) {
-			r.Log.Error(err, "Failed to delete backup during cleanup", "backup", backup.Name)
+	for i := range backupList.Items {
+		backupToDelete := backupList.Items[i]
+		if executor, exists := r.executors[config.Name]; exists && executor != nil {
+			if err := executor.DeleteBackupData(ctx, &backupToDelete); err != nil {
+				r.Log.Error(err, "Failed to delete backup data from storage", "backup", backupToDelete.Name)
+			}
+		}
+		if err := r.Delete(ctx, &backupToDelete); err != nil && !errors.IsNotFound(err) {
+			r.Log.Error(err, "Failed to delete backup during cleanup", "backup", backupToDelete.Name)
 		}
 	}
 
@@ -442,18 +460,23 @@ func (r *BackupConfigReconciler) cleanupBackupConfig(ctx context.Context, config
 // SetupWithManager sets up the controller with the Manager.
 func (r *BackupConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize fields
+	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		return err
+	}
+	r.Clientset = clientset
 	r.scheduler = cron.New()
 	r.executors = make(map[string]BackupExecutor)
 	r.lastRun = make(map[string]time.Time)
 	r.retention = retention.NewManager(r.Client, r.Log)
 	if r.executorFactory == nil {
-		r.executorFactory = func(c client.Client, backend storage.Backend, log logr.Logger) BackupExecutor {
-			return &executorWrapper{exec: backup.NewExecutor(c, backend, log)}
+		r.executorFactory = func(c client.Client, cs *kubernetes.Clientset, backend storage.Backend, log logr.Logger) BackupExecutor {
+			return &executorWrapper{exec: backup.NewExecutor(c, cs, backend, log)}
 		}
 	}
 	if r.storageFactory == nil {
-		r.storageFactory = func(ctx context.Context, c client.Client, s3 *v1alpha1.S3Backend, prefix string, log logr.Logger) (storage.Backend, error) {
-			return storage.NewS3Backend(ctx, c, s3, prefix, log)
+		r.storageFactory = func(ctx context.Context, c client.Client, s3 *v1alpha1.S3Backend, namespace, prefix string, log logr.Logger) (storage.Backend, error) {
+			return storage.NewS3Backend(ctx, c, s3, namespace, prefix, log)
 		}
 	}
 	if r.now == nil {

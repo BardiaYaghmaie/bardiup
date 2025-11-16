@@ -23,6 +23,10 @@ type BackupConfigSpec struct {
 
 	// BackupMethod defines how to backup (snapshot vs copy)
 	BackupMethod BackupMethod `json:"backupMethod,omitempty"`
+
+	// SnapshotClassName is the name of the VolumeSnapshotClass to use for snapshot backups
+	// +optional
+	SnapshotClassName string `json:"snapshotClassName,omitempty"`
 }
 
 // PVCSelector defines how to select PVCs for backup

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -19,19 +20,19 @@ import (
 
 // S3Backend implements the Backend interface for S3-compatible storage
 type S3Backend struct {
-	client *s3.Client
+	client S3Client
 	bucket string
 	prefix string
 	log    logr.Logger
 }
 
 // NewS3Backend creates a new S3 storage backend
-func NewS3Backend(ctx context.Context, k8sClient client.Client, s3Config *v1alpha1.S3Backend, prefix string, log logr.Logger) (*S3Backend, error) {
+func NewS3Backend(ctx context.Context, k8sClient client.Client, s3Config *v1alpha1.S3Backend, namespace, prefix string, log logr.Logger) (*S3Backend, error) {
 	// Get credentials from secret
 	secret := &corev1.Secret{}
 	if err := k8sClient.Get(ctx, client.ObjectKey{
 		Name:      s3Config.CredentialsSecret,
-		Namespace: "bardiup-system", // Assuming controller is in bardiup-system namespace
+		Namespace: namespace, // Use the provided namespace
 	}, secret); err != nil {
 		return nil, fmt.Errorf("failed to get credentials secret: %w", err)
 	}
@@ -145,9 +146,8 @@ func (b *S3Backend) Exists(ctx context.Context, key string) (bool, error) {
 
 	_, err := b.client.HeadObject(ctx, input)
 	if err != nil {
-		// Check if it's a not found error
-		var notFound *types.NotFound
-		if err == notFound {
+		var nfe *types.NotFound
+		if errors.As(err, &nfe) {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to check if object exists: %w", err)
