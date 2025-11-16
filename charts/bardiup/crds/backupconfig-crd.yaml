@@ -1,0 +1,191 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: backupconfigs.bardiup.io
+spec:
+  group: bardiup.io
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - pvcSelector
+            - schedule
+            - storageBackend
+            - retentionPolicy
+            properties:
+              pvcSelector:
+                type: object
+                required:
+                - namespace
+                properties:
+                  namespace:
+                    type: string
+                  matchLabels:
+                    type: object
+                    additionalProperties:
+                      type: string
+                  matchNames:
+                    type: array
+                    items:
+                      type: string
+              schedule:
+                type: string
+                description: Cron expression for backup schedule
+              storageBackend:
+                type: object
+                required:
+                - type
+                properties:
+                  type:
+                    type: string
+                    enum: ["s3", "azure", "gcs"]
+                  prefix:
+                    type: string
+                  s3:
+                    type: object
+                    properties:
+                      bucket:
+                        type: string
+                      region:
+                        type: string
+                      endpoint:
+                        type: string
+                      credentialsSecret:
+                        type: string
+                      forcePathStyle:
+                        type: boolean
+              retentionPolicy:
+                type: object
+                properties:
+                  daily:
+                    type: object
+                    properties:
+                      keep:
+                        type: integer
+                        minimum: 0
+                      selectionStrategy:
+                        type: string
+                        enum: ["newest", "oldest", "distributed"]
+                  weekly:
+                    type: object
+                    properties:
+                      keep:
+                        type: integer
+                        minimum: 0
+                      selectionStrategy:
+                        type: string
+                        enum: ["newest", "oldest", "distributed"]
+                  monthly:
+                    type: object
+                    properties:
+                      keep:
+                        type: integer
+                        minimum: 0
+                      selectionStrategy:
+                        type: string
+                        enum: ["newest", "oldest", "distributed"]
+                  yearly:
+                    type: object
+                    properties:
+                      keep:
+                        type: integer
+                        minimum: 0
+                      selectionStrategy:
+                        type: string
+                        enum: ["newest", "oldest", "distributed"]
+                  custom:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - periodDays
+                      - keep
+                      properties:
+                        periodDays:
+                          type: integer
+                          minimum: 1
+                        keep:
+                          type: integer
+                          minimum: 0
+                        selectionStrategy:
+                          type: string
+                          enum: ["newest", "oldest", "distributed"]
+              paused:
+                type: boolean
+                default: false
+              backupMethod:
+                type: string
+                enum: ["snapshot", "copy"]
+                default: "copy"
+          status:
+            type: object
+            properties:
+              lastBackupTime:
+                type: string
+                format: date-time
+              lastSuccessfulBackupTime:
+                type: string
+                format: date-time
+              nextScheduledTime:
+                type: string
+                format: date-time
+              backupCount:
+                type: integer
+              activeBackups:
+                type: array
+                items:
+                  type: string
+              phase:
+                type: string
+                enum: ["Ready", "Pending", "Error", "Paused"]
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+    additionalPrinterColumns:
+    - name: Schedule
+      type: string
+      jsonPath: .spec.schedule
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Last Backup
+      type: date
+      jsonPath: .status.lastBackupTime
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    subresources:
+      status: {}
+  scope: Cluster
+  names:
+    plural: backupconfigs
+    singular: backupconfig
+    kind: BackupConfig
+    shortNames:
+    - bc

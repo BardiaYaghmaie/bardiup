@@ -1,0 +1,137 @@
+# Default values for bardiup.
+
+replicaCount: 1
+
+image:
+  repository: bardiup/bardiup
+  pullPolicy: IfNotPresent
+  tag: ""  # Overrides the image tag whose default is the chart appVersion.
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Controller configuration
+controller:
+  # Leader election ensures only one controller is active
+  leaderElection:
+    enabled: true
+  
+  # Metrics configuration
+  metrics:
+    enabled: true
+    port: 8080
+  
+  # Health probe configuration
+  healthProbe:
+    enabled: true
+    port: 8081
+  
+  # Webhook configuration (for future use)
+  webhook:
+    enabled: false
+    port: 9443
+    certDir: /tmp/k8s-webhook-server/serving-certs
+
+# Storage configuration examples
+# These are not used directly but serve as documentation
+storageExamples:
+  s3:
+    # Example S3 configuration
+    type: s3
+    bucket: my-backup-bucket
+    region: us-west-2
+    endpoint: ""  # Optional: for S3-compatible storage like MinIO
+    credentialsSecret: s3-credentials
+    prefix: bardiup-backups
+  
+  # Future storage backends
+  azure:
+    type: azure
+    containerName: backups
+    accountName: myaccount
+    credentialsSecret: azure-credentials
+  
+  gcs:
+    type: gcs
+    bucket: my-backup-bucket
+    credentialsSecret: gcs-credentials
+
+# Example backup configurations
+backupExamples:
+  # Example of a daily backup with sophisticated retention
+  dailyBackup:
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    retentionPolicy:
+      daily:
+        keep: 7
+        selectionStrategy: newest
+      weekly:
+        keep: 4
+        selectionStrategy: distributed
+      monthly:
+        keep: 12
+        selectionStrategy: distributed
+      yearly:
+        keep: 5
+        selectionStrategy: distributed
+      custom:
+        - periodDays: 90  # Quarterly
+          keep: 8
+          selectionStrategy: distributed
+  
+  # Example of hourly backup with short retention
+  hourlyBackup:
+    schedule: "0 * * * *"  # Every hour
+    retentionPolicy:
+      daily:
+        keep: 24  # Keep 24 hourly backups (1 day)
+        selectionStrategy: newest
+      weekly:
+        keep: 7
+        selectionStrategy: distributed
+
+# ServiceMonitor for Prometheus integration
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  path: /metrics
+  labels: {}

@@ -1,0 +1,92 @@
+# Example BackupConfig with dynamic retention policy
+# This demonstrates the key feature of bardiup: sophisticated retention management
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: postgres-backup-dynamic
+spec:
+  # Select PVCs to backup
+  pvcSelector:
+    namespace: default
+    matchLabels:
+      app: postgres
+  
+  # Run backup every 6 hours
+  schedule: "0 */6 * * *"
+  
+  # S3 storage backend
+  storageBackend:
+    type: s3
+    prefix: postgres-backups
+    s3:
+      bucket: my-backup-bucket
+      region: us-west-2
+      credentialsSecret: s3-credentials
+      # endpoint: https://minio.example.com  # Optional: for MinIO or other S3-compatible storage
+      # forcePathStyle: true  # Required for MinIO
+  
+  # Dynamic retention policy - THE KEY FEATURE
+  retentionPolicy:
+    # Keep daily backups for 7 days
+    daily:
+      keep: 7
+      selectionStrategy: newest  # Keep the 7 most recent backups
+    
+    # Keep weekly backups for 4 weeks
+    weekly:
+      keep: 4
+      selectionStrategy: distributed  # Distribute backups across the 4 weeks
+    
+    # Keep monthly backups for 12 months
+    monthly:
+      keep: 12
+      selectionStrategy: distributed  # One backup per month, distributed
+    
+    # Keep yearly backups for 5 years
+    yearly:
+      keep: 5
+      selectionStrategy: distributed  # One backup per year
+    
+    # Custom retention periods
+    custom:
+      # Quarterly backups for 2 years (8 quarters)
+      - periodDays: 90
+        keep: 8
+        selectionStrategy: distributed
+      
+      # Bi-weekly backups for 2 months
+      - periodDays: 14
+        keep: 4
+        selectionStrategy: newest
+  
+  # Backup method
+  backupMethod: copy  # or "snapshot" for VolumeSnapshot API
+  
+  # Set to true to pause backup schedule
+  paused: false
+---
+# Example: Minimal daily backup configuration
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: simple-daily-backup
+spec:
+  pvcSelector:
+    namespace: default
+    matchNames:
+      - data-pvc
+      - config-pvc
+  
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  
+  storageBackend:
+    type: s3
+    prefix: daily-backups
+    s3:
+      bucket: backup-bucket
+      region: us-east-1
+      credentialsSecret: s3-credentials
+  
+  retentionPolicy:
+    daily:
+      keep: 7  # Simple 7-day retention

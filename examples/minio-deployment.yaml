@@ -1,0 +1,124 @@
+# MinIO deployment for local testing with bardiup
+# This creates a single-instance MinIO server for development/testing
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-pvc
+  namespace: minio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+      - name: minio
+        image: minio/minio:latest
+        args:
+        - server
+        - /data
+        - --console-address
+        - ":9001"
+        env:
+        - name: MINIO_ROOT_USER
+          value: "minioadmin"
+        - name: MINIO_ROOT_PASSWORD
+          value: "minioadmin"
+        ports:
+        - containerPort: 9000
+          name: api
+        - containerPort: 9001
+          name: console
+        volumeMounts:
+        - name: storage
+          mountPath: /data
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: minio-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  selector:
+    app: minio
+  ports:
+  - name: api
+    port: 9000
+    targetPort: 9000
+  - name: console
+    port: 9001
+    targetPort: 9001
+  type: ClusterIP
+---
+# Secret for bardiup to access MinIO
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  namespace: bardiup-system
+type: Opaque
+stringData:
+  accessKeyId: "minioadmin"
+  secretAccessKey: "minioadmin"
+---
+# Example BackupConfig using MinIO
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: test-backup-minio
+spec:
+  pvcSelector:
+    namespace: default
+    matchLabels:
+      test: backup
+  
+  schedule: "*/5 * * * *"  # Every 5 minutes for testing
+  
+  storageBackend:
+    type: s3
+    prefix: test-backups
+    s3:
+      bucket: backups  # Create this bucket in MinIO
+      region: us-east-1
+      endpoint: http://minio.minio.svc.cluster.local:9000
+      forcePathStyle: true  # Required for MinIO
+      credentialsSecret: minio-credentials
+  
+  retentionPolicy:
+    daily:
+      keep: 7
+      selectionStrategy: newest
+    weekly:
+      keep: 4
+      selectionStrategy: distributed
+    monthly:
+      keep: 3
+      selectionStrategy: distributed
+  
+  backupMethod: copy
