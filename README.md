@@ -115,6 +115,8 @@ spec:
 | `backupMethod` | Method to use (copy/snapshot) | No |
 | `paused` | Pause backup schedule | No |
 
+`StorageLocation.Path` always stores a **relative key** (no prefix). The S3 backend automatically prepends the configured prefix, preventing double-prefix bugs.
+
 ### Retention Policy Options
 
 Each retention tier (daily, weekly, monthly, yearly, custom) supports:
@@ -122,16 +124,18 @@ Each retention tier (daily, weekly, monthly, yearly, custom) supports:
 - `keep`: Number of backups to retain for this period
 - `selectionStrategy`: How to select which backups to keep
   - `newest`: Keep the most recent backups
-  - `oldest`: Keep the oldest backups
+  - `oldest`: Keep the earliest backups
   - `distributed`: Distribute backups across the time period
 
 ### Selection Strategy Examples
 
-**newest**: If you have 100 daily backups and `keep: 7`, keeps the 7 most recent backups.
+- **newest**: If you have 100 daily backups and `keep: 7`, keeps the 7 most recent backups.
+- **distributed**: If you have 365 daily backups (1 year) and monthly `keep: 12`, it will keep 1 backup per month, distributed evenly.
+- **oldest**: Useful for compliance where you need to retain the earliest backups.
 
-**distributed**: If you have 365 daily backups (1 year) and monthly `keep: 12`, it will keep 1 backup per month, distributed evenly.
+## 📚 Documentation
 
-**oldest**: Useful for compliance where you need to keep the earliest backups.
+Full, task-oriented documentation (installation, configuration, retention design, testing, troubleshooting, and restore workflows) lives in [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md).
 
 ## 🧪 Local Testing with Kind
 
@@ -200,6 +204,21 @@ kubectl get backups -A
 kubectl logs -n bardiup-system deployment/bardiup -f
 ```
 
+## 🧪 Testing
+
+- **Unit & controller tests** (retention logic, PVC selection, backup creation):
+
+  ```bash
+  go test ./...
+  ```
+
+- **End-to-end tests on kind**:
+  1. Deploy controller and CRDs (`helm install ...`).
+  2. Apply `examples/test-pvc.yaml` and `examples/minio-deployment.yaml`.
+  3. Wait for backups to appear via `kubectl get backups -A`.
+
+Testing guidance, expected outputs, and troubleshooting steps are fully documented in [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md#testing).
+
 ## 🏗️ Architecture
 
 Bardiup consists of:
@@ -213,7 +232,6 @@ Bardiup consists of:
 
 ### Prerequisites
 - Go 1.21+
-- Make
 - Docker
 - Kind (for local testing)
 
@@ -223,14 +241,15 @@ Bardiup consists of:
 # Download dependencies
 go mod download
 
+# Run gofmt & tests
+gofmt -w $(git ls-files '*.go')
+go test ./...
+
 # Build binary
 go build -o bin/manager cmd/main.go
 
 # Build Docker image
 docker build -t bardiup:latest .
-
-# Run tests
-go test ./...
 ```
 
 ### Running Locally

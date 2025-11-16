@@ -411,3 +411,17 @@ func (e *Executor) generateChecksum() string {
 func ptr[T any](v T) *T {
 	return &v
 }
+
+// DeleteBackupData removes backup artifacts from the storage backend.
+func (e *Executor) DeleteBackupData(ctx context.Context, backup *v1alpha1.Backup) error {
+	if e.storage == nil {
+		return fmt.Errorf("storage backend is not configured")
+	}
+	if backup == nil {
+		return fmt.Errorf("backup reference is nil")
+	}
+	if backup.Spec.StorageLocation.Path == "" {
+		return fmt.Errorf("backup storage path is empty")
+	}
+	return e.storage.Delete(ctx, backup.Spec.StorageLocation.Path)
+}

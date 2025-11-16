@@ -21,14 +21,37 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
+// BackupExecutor abstracts backup execution for improved testability.
+type BackupExecutor interface {
+	ExecuteBackup(ctx context.Context, backup *v1alpha1.Backup, config *v1alpha1.BackupConfig) error
+	DeleteBackupData(ctx context.Context, backup *v1alpha1.Backup) error
+}
+
+type executorWrapper struct {
+	exec *backup.Executor
+}
+
+func (e *executorWrapper) ExecuteBackup(ctx context.Context, backupObj *v1alpha1.Backup, config *v1alpha1.BackupConfig) error {
+	return e.exec.ExecuteBackup(ctx, backupObj, config)
+}
+
+func (e *executorWrapper) DeleteBackupData(ctx context.Context, backupObj *v1alpha1.Backup) error {
+	return e.exec.DeleteBackupData(ctx, backupObj)
+}
+
 // BackupConfigReconciler reconciles a BackupConfig object
 type BackupConfigReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	Log       logr.Logger
 	scheduler *cron.Cron
-	executors map[string]*backup.Executor
+	executors map[string]BackupExecutor
 	retention *retention.Manager
+
+	executorFactory func(client.Client, storage.Backend, logr.Logger) BackupExecutor
+	storageFactory  func(ctx context.Context, c client.Client, s3 *v1alpha1.S3Backend, prefix string, log logr.Logger) (storage.Backend, error)
+	now             func() time.Time
+	lastRun         map[string]time.Time
 }
 
 // +kubebuilder:rbac:groups=bardiup.io,resources=backupconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -95,7 +118,7 @@ func (r *BackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err != nil {
 			log.Error(err, "Failed to create storage backend")
 			backupConfig.Status.Phase = v1alpha1.BackupConfigPhaseError
-			backupConfig.Status.Conditions = append(backupConfig.Status.Conditions, metav1.Condition{
+			setCondition(&backupConfig.Status.Conditions, metav1.Condition{
 				Type:               "StorageReady",
 				Status:             metav1.ConditionFalse,
 				Reason:             "StorageInitFailed",
@@ -105,7 +128,7 @@ func (r *BackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, r.Status().Update(ctx, backupConfig)
 		}
 
-		executor := backup.NewExecutor(r.Client, storageBackend, log)
+		executor := r.executorFactory(r.Client, storageBackend, log)
 		r.executors[backupConfig.Name] = executor
 	}
 
@@ -124,7 +147,7 @@ func (r *BackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Update status
 	backupConfig.Status.Phase = v1alpha1.BackupConfigPhaseReady
-	backupConfig.Status.Conditions = append(backupConfig.Status.Conditions, metav1.Condition{
+	setCondition(&backupConfig.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionTrue,
 		Reason:             "BackupConfigured",
@@ -134,7 +157,7 @@ func (r *BackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Calculate next scheduled time
 	if schedule, err := cron.ParseStandard(backupConfig.Spec.Schedule); err == nil {
-		nextTime := schedule.Next(time.Now())
+		nextTime := schedule.Next(r.now())
 		backupConfig.Status.NextScheduledTime = &metav1.Time{Time: nextTime}
 	}
 
@@ -158,33 +181,42 @@ func (r *BackupConfigReconciler) scheduleBackups(ctx context.Context, config *v1
 	lastBackupTime := time.Time{}
 	if config.Status.LastBackupTime != nil {
 		lastBackupTime = config.Status.LastBackupTime.Time
+	} else if t, ok := r.lastRun[config.Name]; ok {
+		lastBackupTime = t
 	}
 
 	nextTime := schedule.Next(lastBackupTime)
-	if time.Now().After(nextTime) {
+	if r.now().After(nextTime) {
 		// Time to create a backup
-		if err := r.createBackup(ctx, config); err != nil {
+		createdCount, err := r.createBackup(ctx, config)
+		if err != nil {
 			return fmt.Errorf("failed to create backup: %w", err)
 		}
 
-		// Update last backup time
-		config.Status.LastBackupTime = &metav1.Time{Time: time.Now()}
+		if createdCount > 0 {
+			now := r.now()
+			config.Status.LastBackupTime = &metav1.Time{Time: now}
+			config.Status.LastSuccessfulBackupTime = &metav1.Time{Time: now}
+			config.Status.BackupCount += createdCount
+			r.lastRun[config.Name] = now
+		} else {
+			r.Log.Info("No matching PVCs found for backup", "config", config.Name)
+		}
 	}
 
 	return nil
 }
 
 // createBackup creates a new backup for the PVCs matching the selector
-func (r *BackupConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.BackupConfig) error {
+func (r *BackupConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.BackupConfig) (int, error) {
 	// Find PVCs matching the selector
 	pvcs, err := r.findMatchingPVCs(ctx, config)
 	if err != nil {
-		return fmt.Errorf("failed to find matching PVCs: %w", err)
+		return 0, fmt.Errorf("failed to find matching PVCs: %w", err)
 	}
 
 	if len(pvcs) == 0 {
-		r.Log.Info("No PVCs found matching selector", "config", config.Name)
-		return nil
+		return 0, nil
 	}
 
 	// Get existing backups for retention period determination
@@ -192,23 +224,35 @@ func (r *BackupConfigReconciler) createBackup(ctx context.Context, config *v1alp
 	if err := r.List(ctx, existingBackups, client.MatchingLabels{
 		"bardiup.io/config": config.Name,
 	}); err != nil {
-		return fmt.Errorf("failed to list existing backups: %w", err)
+		return 0, fmt.Errorf("failed to list existing backups: %w", err)
 	}
+
+	existingItems := append([]v1alpha1.Backup{}, existingBackups.Items...)
+	created := 0
 
 	// Create a backup for each PVC
 	for _, pvc := range pvcs {
+		now := r.now()
+
 		// Determine retention period for this backup
 		retentionPeriod := r.retention.DetermineRetentionPeriod(
 			config.Spec.RetentionPolicy,
-			existingBackups.Items,
-			time.Now(),
+			existingItems,
+			now,
 		)
 
 		// Calculate expiration time
 		expiresAt := r.retention.CalculateExpiration(
 			config.Spec.RetentionPolicy,
 			retentionPeriod,
-			time.Now(),
+			now,
+		)
+
+		storagePath := fmt.Sprintf("%s/%s/%s-%d.tar.gz",
+			pvc.Namespace,
+			pvc.Name,
+			pvc.Name,
+			now.Unix(),
 		)
 
 		// Create backup object
@@ -228,14 +272,9 @@ func (r *BackupConfigReconciler) createBackup(ctx context.Context, config *v1alp
 				PVCName:      pvc.Name,
 				PVCNamespace: pvc.Namespace,
 				StorageLocation: v1alpha1.StorageLocation{
-					Type: config.Spec.StorageBackend.Type,
-					Path: fmt.Sprintf("%s/%s/%s/%s-%d.tar.gz",
-						config.Spec.StorageBackend.Prefix,
-						pvc.Namespace,
-						pvc.Name,
-						pvc.Name,
-						time.Now().Unix(),
-					),
+					Type:   config.Spec.StorageBackend.Type,
+					Path:   storagePath,
+					Bucket: getBucketName(config),
 				},
 				RetentionPeriod: retentionPeriod,
 				ExpiresAt:       expiresAt,
@@ -244,31 +283,50 @@ func (r *BackupConfigReconciler) createBackup(ctx context.Context, config *v1alp
 
 		// Set owner reference
 		if err := controllerutil.SetControllerReference(config, backup, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference: %w", err)
+			return created, fmt.Errorf("failed to set owner reference: %w", err)
 		}
 
 		// Create the backup
 		if err := r.Create(ctx, backup); err != nil {
-			return fmt.Errorf("failed to create backup: %w", err)
+			return created, fmt.Errorf("failed to create backup: %w", err)
 		}
+
+		existingItems = append(existingItems, *backup)
+		created++
 
 		r.Log.Info("Created backup", "backup", backup.Name, "pvc", pvc.Name, "retention", retentionPeriod)
 
 		// Execute the backup
-		if executor, exists := r.executors[config.Name]; exists {
-			go func() {
-				if err := executor.ExecuteBackup(context.Background(), backup, config); err != nil {
-					r.Log.Error(err, "Failed to execute backup", "backup", backup.Name)
+		if executor, exists := r.executors[config.Name]; exists && executor != nil {
+			go func(b *v1alpha1.Backup) {
+				if err := executor.ExecuteBackup(context.Background(), b, config); err != nil {
+					r.Log.Error(err, "Failed to execute backup", "backup", b.Name)
 				}
-			}()
+			}(backup.DeepCopy())
 		}
 	}
 
-	// Update backup count
-	config.Status.BackupCount += len(pvcs)
-	config.Status.LastSuccessfulBackupTime = &metav1.Time{Time: time.Now()}
+	return created, nil
+}
 
-	return nil
+func getBucketName(config *v1alpha1.BackupConfig) string {
+	if config.Spec.StorageBackend.S3 != nil {
+		return config.Spec.StorageBackend.S3.Bucket
+	}
+	return ""
+}
+
+func setCondition(conditions *[]metav1.Condition, newCondition metav1.Condition) {
+	if conditions == nil {
+		return
+	}
+	for i, cond := range *conditions {
+		if cond.Type == newCondition.Type {
+			(*conditions)[i] = newCondition
+			return
+		}
+	}
+	*conditions = append(*conditions, newCondition)
 }
 
 // findMatchingPVCs finds PVCs that match the selector
@@ -328,11 +386,9 @@ func (r *BackupConfigReconciler) applyRetentionPolicy(ctx context.Context, confi
 	// Delete backups that should be removed
 	for _, backup := range toDelete {
 		// Delete from object storage
-		if executor, exists := r.executors[config.Name]; exists {
-			if executor != nil {
-				// Delete from storage backend
-				// This would be implemented in the executor
-				r.Log.Info("Would delete backup from storage", "backup", backup.Name)
+		if executor, exists := r.executors[config.Name]; exists && executor != nil {
+			if err := executor.DeleteBackupData(ctx, &backup); err != nil {
+				r.Log.Error(err, "Failed to delete backup data from storage", "backup", backup.Name)
 			}
 		}
 
@@ -355,7 +411,7 @@ func (r *BackupConfigReconciler) createStorageBackend(ctx context.Context, confi
 		if config.Spec.StorageBackend.S3 == nil {
 			return nil, fmt.Errorf("S3 configuration is required when type is s3")
 		}
-		return storage.NewS3Backend(ctx, r.Client, config.Spec.StorageBackend.S3, config.Spec.StorageBackend.Prefix, r.Log)
+		return r.storageFactory(ctx, r.Client, config.Spec.StorageBackend.S3, config.Spec.StorageBackend.Prefix, r.Log)
 	default:
 		return nil, fmt.Errorf("unsupported storage backend type: %s", config.Spec.StorageBackend.Type)
 	}
@@ -387,8 +443,22 @@ func (r *BackupConfigReconciler) cleanupBackupConfig(ctx context.Context, config
 func (r *BackupConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize fields
 	r.scheduler = cron.New()
-	r.executors = make(map[string]*backup.Executor)
+	r.executors = make(map[string]BackupExecutor)
+	r.lastRun = make(map[string]time.Time)
 	r.retention = retention.NewManager(r.Client, r.Log)
+	if r.executorFactory == nil {
+		r.executorFactory = func(c client.Client, backend storage.Backend, log logr.Logger) BackupExecutor {
+			return &executorWrapper{exec: backup.NewExecutor(c, backend, log)}
+		}
+	}
+	if r.storageFactory == nil {
+		r.storageFactory = func(ctx context.Context, c client.Client, s3 *v1alpha1.S3Backend, prefix string, log logr.Logger) (storage.Backend, error) {
+			return storage.NewS3Backend(ctx, c, s3, prefix, log)
+		}
+	}
+	if r.now == nil {
+		r.now = time.Now
+	}
 
 	// Start the scheduler
 	r.scheduler.Start()
