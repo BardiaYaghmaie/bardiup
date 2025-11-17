@@ -16,6 +16,7 @@ import (
 type Manager struct {
 	client client.Client
 	log    logr.Logger
+	now    func() time.Time // For testing - allows overriding time
 }
 
 // NewManager creates a new retention manager
@@ -23,6 +24,7 @@ func NewManager(client client.Client, log logr.Logger) *Manager {
 	return &Manager{
 		client: client,
 		log:    log,
+		now:    time.Now,
 	}
 }
 
@@ -41,7 +43,7 @@ func (m *Manager) ApplyRetentionPolicy(ctx context.Context, config *v1alpha1.Bac
 
 	// Convert backups to BackupInfo for easier processing
 	backupInfos := make([]BackupInfo, 0, len(backups))
-	now := time.Now()
+	now := m.now()
 
 	for i := range backups {
 		backup := &backups[i]
@@ -115,7 +117,12 @@ func (m *Manager) selectBackupsToKeep(policy v1alpha1.RetentionPolicy, backups [
 	// Process custom retention periods
 	for _, custom := range policy.Custom {
 		if custom.Keep > 0 {
-			period := time.Duration(custom.PeriodDays) * 24 * time.Hour
+			var period time.Duration
+			if custom.PeriodHours > 0 {
+				period = time.Duration(custom.PeriodHours) * time.Hour
+			} else {
+				period = time.Duration(custom.PeriodDays) * 24 * time.Hour
+			}
 			customBackups := m.selectBackupsForPeriod(backups, now, period, custom.Keep, custom.SelectionStrategy)
 			for _, b := range customBackups {
 				toKeep[b.Backup.Name] = b
@@ -151,23 +158,63 @@ func (m *Manager) selectBackupsForPeriod(backups []BackupInfo, now time.Time, pe
 
 	switch strategy {
 	case "distributed":
-		// Try to keep backups distributed across time periods
-		periods := make([]int, 0, len(periodBackups))
-		for p := range periodBackups {
-			periods = append(periods, p)
-		}
-		sort.Ints(periods)
+		// For hourly custom retention, look for backups closest to the target age
+		// For other periods, distribute across time buckets
+		if period < 24*time.Hour {
+			// Hourly retention - find backups closest to the target age
+			targetAge := period
 
-		// Calculate step size for distribution
-		step := 1
-		if len(periods) > keep {
-			step = len(periods) / keep
-		}
+			// Look for backups closest to the target age (within the period itself)
+			// For example, for 3 hours, look for backups between 2.5 and 3.5 hours old
+			candidates := []BackupInfo{}
+			for _, backup := range backups {
+				// Find backups within the period window (50% before and 50% after)
+				ageDiff := backup.Age - targetAge
+				if ageDiff < 0 {
+					ageDiff = -ageDiff
+				}
+				// Accept backups within 100% of the target period (e.g., for 3h, accept 1.5h to 4.5h)
+				if ageDiff <= period {
+					candidates = append(candidates, backup)
+				}
+			}
 
-		for i := 0; i < len(periods) && len(selected) < keep; i += step {
-			if backupsInPeriod, exists := periodBackups[periods[i]]; exists && len(backupsInPeriod) > 0 {
-				// Select the newest backup from this period
-				selected = append(selected, backupsInPeriod[0])
+			// Sort by proximity to target age
+			sort.Slice(candidates, func(i, j int) bool {
+				diffI := candidates[i].Age - targetAge
+				if diffI < 0 {
+					diffI = -diffI
+				}
+				diffJ := candidates[j].Age - targetAge
+				if diffJ < 0 {
+					diffJ = -diffJ
+				}
+				return diffI < diffJ
+			})
+
+			// Keep the closest ones
+			for i := 0; i < keep && i < len(candidates); i++ {
+				selected = append(selected, candidates[i])
+			}
+		} else {
+			// Longer periods - distribute across time periods
+			periods := make([]int, 0, len(periodBackups))
+			for p := range periodBackups {
+				periods = append(periods, p)
+			}
+			sort.Ints(periods)
+
+			// Calculate step size for distribution
+			step := 1
+			if len(periods) > keep {
+				step = len(periods) / keep
+			}
+
+			for i := 0; i < len(periods) && len(selected) < keep; i += step {
+				if backupsInPeriod, exists := periodBackups[periods[i]]; exists && len(backupsInPeriod) > 0 {
+					// Select the newest backup from this period
+					selected = append(selected, backupsInPeriod[0])
+				}
 			}
 		}
 
@@ -218,8 +265,17 @@ func (m *Manager) CalculateExpiration(policy v1alpha1.RetentionPolicy, retention
 	default:
 		// Check custom retention periods
 		for _, custom := range policy.Custom {
-			if fmt.Sprintf("custom-%d", custom.PeriodDays) == retentionPeriod {
-				expiration = creationTime.Add(time.Duration(custom.PeriodDays*custom.Keep) * 24 * time.Hour)
+			var periodName string
+			var periodDuration time.Duration
+			if custom.PeriodHours > 0 {
+				periodName = fmt.Sprintf("custom-h%d", custom.PeriodHours)
+				periodDuration = time.Duration(custom.PeriodHours) * time.Hour
+			} else {
+				periodName = fmt.Sprintf("custom-d%d", custom.PeriodDays)
+				periodDuration = time.Duration(custom.PeriodDays) * 24 * time.Hour
+			}
+			if periodName == retentionPeriod {
+				expiration = creationTime.Add(periodDuration * time.Duration(custom.Keep))
 				break
 			}
 		}
@@ -275,9 +331,16 @@ func (m *Manager) DetermineRetentionPeriod(policy v1alpha1.RetentionPolicy, exis
 
 	// Check custom periods
 	for _, custom := range policy.Custom {
-		periodName := fmt.Sprintf("custom-%d", custom.PeriodDays)
+		var periodName string
+		var period time.Duration
+		if custom.PeriodHours > 0 {
+			periodName = fmt.Sprintf("custom-h%d", custom.PeriodHours)
+			period = time.Duration(custom.PeriodHours) * time.Hour
+		} else {
+			periodName = fmt.Sprintf("custom-d%d", custom.PeriodDays)
+			period = time.Duration(custom.PeriodDays) * 24 * time.Hour
+		}
 		lastCustomBackup := m.findLastBackupForPeriod(existingBackups, periodName)
-		period := time.Duration(custom.PeriodDays) * 24 * time.Hour
 		if lastCustomBackup == nil || now.Sub(lastCustomBackup.CreationTimestamp.Time) > period {
 			return periodName
 		}

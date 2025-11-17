@@ -97,7 +97,12 @@ type RetentionRule struct {
 // CustomRetention allows defining custom retention periods
 type CustomRetention struct {
 	// Period in days (e.g., 90 for quarterly)
-	PeriodDays int `json:"periodDays"`
+	// If PeriodHours is set, this is ignored
+	PeriodDays int `json:"periodDays,omitempty"`
+
+	// Period in hours (e.g., 1 for 1 hour, 3 for 3 hours)
+	// Takes precedence over PeriodDays if both are set
+	PeriodHours int `json:"periodHours,omitempty"`
 
 	// Keep defines how many backups to keep for this period
 	Keep int `json:"keep"`

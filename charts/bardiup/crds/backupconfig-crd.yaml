@@ -111,12 +111,15 @@ spec:
                     items:
                       type: object
                       required:
-                      - periodDays
                       - keep
                       properties:
                         periodDays:
                           type: integer
                           minimum: 1
+                        periodHours:
+                          type: integer
+                          minimum: 1
+                          description: Period in hours (takes precedence over periodDays)
                         keep:
                           type: integer
                           minimum: 0

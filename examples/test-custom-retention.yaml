@@ -1,0 +1,46 @@
+# Test BackupConfig with custom retention periods
+# Backups every 10 minutes, keep 10 newest, plus 1 from 1 hour ago and 1 from 3 hours ago
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: test-custom-retention
+spec:
+  pvcSelector:
+    namespace: default
+    matchLabels:
+      test: backup
+  
+  # Every 10 minutes
+  schedule: "*/10 * * * *"
+  
+  storageBackend:
+    type: s3
+    prefix: custom-retention-test
+    s3:
+      bucket: backups
+      region: us-east-1
+      endpoint: http://minio.minio.svc.cluster.local:9000
+      forcePathStyle: true
+      credentialsSecret: minio-credentials
+  
+  retentionPolicy:
+    # Keep 10 most recent backups
+    daily:
+      keep: 10
+      selectionStrategy: newest
+    
+    # Custom retention periods
+    custom:
+      # Keep 1 backup from 1 hour ago
+      - periodHours: 1
+        keep: 1
+        selectionStrategy: distributed
+      
+      # Keep 1 backup from 3 hours ago  
+      - periodHours: 3
+        keep: 1
+        selectionStrategy: distributed
+  
+  backupMethod: copy
+  paused: false
+

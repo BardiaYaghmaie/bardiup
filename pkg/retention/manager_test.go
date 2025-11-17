@@ -35,7 +35,7 @@ func TestCalculateExpiration(t *testing.T) {
 		{"weekly", "weekly", creation.Add(4 * 7 * 24 * time.Hour)},
 		{"monthly", "monthly", creation.Add(3 * 30 * 24 * time.Hour)},
 		{"yearly", "yearly", creation.Add(2 * 365 * 24 * time.Hour)},
-		{"custom", "custom-90", creation.Add(90 * 24 * time.Hour)},
+		{"custom", "custom-d90", creation.Add(90 * 24 * time.Hour)},
 		{"default", "unknown", creation.Add(7 * 24 * time.Hour)},
 	}
 
@@ -55,7 +55,7 @@ func TestDetermineRetentionPeriod(t *testing.T) {
 
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	policy := v1alpha1.RetentionPolicy{
-		Weekly: &v1alpha1.RetentionRule{Keep: 4},
+		Weekly:  &v1alpha1.RetentionRule{Keep: 4},
 		Monthly: &v1alpha1.RetentionRule{Keep: 6},
 		Custom: []v1alpha1.CustomRetention{
 			{PeriodDays: 90, Keep: 2},
@@ -151,4 +151,3 @@ func newBackupWithTime(name string, timestamp time.Time) v1alpha1.Backup {
 		},
 	}
 }
-
