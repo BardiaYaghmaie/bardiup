@@ -346,8 +346,8 @@ func (m *Manager) DetermineRetentionPeriod(policy v1alpha1.RetentionPolicy, exis
 		}
 	}
 
-	// Default to daily
-	return "daily"
+	// No period matched
+	return ""
 }
 
 func (m *Manager) findLastBackupForPeriod(backups []v1alpha1.Backup, period string) *v1alpha1.Backup {

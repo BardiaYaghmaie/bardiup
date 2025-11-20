@@ -82,6 +82,8 @@ helm install bardiup ./charts/bardiup \
 
 Customize image references when pushing to a registry.
 
+> **Note:** The Helm chart automatically installs the necessary `VolumeSnapshot` CRDs from the `external-snapshotter` dependency.
+
 ### From Source
 
 ```bash
@@ -170,10 +172,7 @@ spec:
     weekly:  { keep: 4,  selectionStrategy: distributed }
     monthly: { keep: 12, selectionStrategy: distributed }
     yearly:  { keep: 5,  selectionStrategy: distributed }
-    custom:
-      - periodDays: 90
-        keep: 8
-        selectionStrategy: distributed
+  snapshotClassName: csi-hostpath-snapclass
 ```
 
 Apply with `kubectl apply -f backupconfig.yaml`.
@@ -261,6 +260,8 @@ This runs:
 5. Inspect MinIO bucket (`kubectl -n minio port-forward deployment/minio 9000:9000` + `mc` or AWS CLI).
 
 > The `docs/USER_GUIDE.md` scenario is fully automated in `examples/minio-deployment.yaml`.
+>
+> **Note:** When testing snapshot functionality, ensure that your Kubernetes cluster has a CSI driver that supports volume snapshots and that you have created a `VolumeSnapshotClass`.
 
 ---
 

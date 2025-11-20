@@ -1,37 +1,42 @@
 package backup
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/bardiup/bardiup/api/v1alpha1"
 	"github.com/bardiup/bardiup/pkg/storage"
 	"github.com/go-logr/logr"
+	snapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // Executor handles backup execution
 type Executor struct {
-	client  client.Client
-	storage storage.Backend
-	log     logr.Logger
+	client    client.Client
+	clientset kubernetes.Interface
+	storage   storage.Backend
+	log       logr.Logger
 }
 
 // NewExecutor creates a new backup executor
-func NewExecutor(client client.Client, storage storage.Backend, log logr.Logger) *Executor {
+func NewExecutor(client client.Client, clientset kubernetes.Interface, storage storage.Backend, log logr.Logger) *Executor {
 	return &Executor{
-		client:  client,
-		storage: storage,
-		log:     log,
+		client:    client,
+		clientset: clientset,
+		storage:   storage,
+		log:       log,
 	}
 }
 
@@ -110,10 +115,19 @@ func (e *Executor) executeCopyBackup(ctx context.Context, backup *v1alpha1.Backu
 		return fmt.Errorf("failed to list job pods: %w", err)
 	}
 
-	// Extract backup size and checksum from pod logs or annotations
-	// This is simplified - in production you'd extract this from the backup job
-	backup.Spec.StorageLocation.Size = e.calculateBackupSize(pvc)
-	backup.Status.Checksum = e.generateChecksum()
+	// Extract backup size and checksum from pod logs
+	if len(podList.Items) > 0 {
+		pod := podList.Items[0]
+		logs, err := e.getPodLogs(ctx, &pod)
+		if err != nil {
+			return fmt.Errorf("failed to get pod logs: %w", err)
+		}
+		size, checksum := e.parseBackupMetadata(logs)
+		backup.Spec.StorageLocation.Size = size
+		backup.Status.Checksum = checksum
+	} else {
+		return fmt.Errorf("no pods found for backup job")
+	}
 
 	e.log.Info("Backup job completed successfully", "job", job.Name)
 	return nil
@@ -124,18 +138,27 @@ func (e *Executor) createBackupJob(backup *v1alpha1.Backup, pvc *corev1.Persiste
 	jobName := fmt.Sprintf("backup-%s-%s", backup.Name, backup.Spec.PVCName)
 
 	// Build the backup container command
-	// This is a simplified version - in production you'd have a proper backup image
 	backupCommand := []string{
 		"/bin/sh",
 		"-c",
-		fmt.Sprintf(`
-			set -e
-			echo "Starting backup of /data to %s"
-			tar czf /tmp/backup.tar.gz /data
-			# Upload to object storage (simplified - would use AWS CLI or similar)
-			echo "Uploading backup to object storage..."
+		`
+			set -euxo pipefail
+			echo "Starting backup of /data to s3://${S3_BUCKET}/` + backup.Spec.StorageLocation.Path + `"
+			tar czf /tmp/backup.tar.gz -C /data .
+
+			SIZE=$(stat -c%s /tmp/backup.tar.gz)
+			CHECKSUM=$(sha256sum /tmp/backup.tar.gz | awk '{ print $1 }')
+			echo "Backup Size: ${SIZE}"
+			echo "Backup Checksum: ${CHECKSUM}"
+
+			S3_ENDPOINT_FLAG=""
+			if [ -n "${S3_ENDPOINT}" ]; then
+				S3_ENDPOINT_FLAG="--endpoint-url ${S3_ENDPOINT}"
+			fi
+
+			aws s3 cp ${S3_ENDPOINT_FLAG} /tmp/backup.tar.gz s3://${S3_BUCKET}/` + backup.Spec.StorageLocation.Path + `
 			echo "Backup completed successfully"
-		`, backup.Spec.StorageLocation.Path),
+		`,
 	}
 
 	job := &batchv1.Job{
@@ -161,7 +184,7 @@ func (e *Executor) createBackupJob(backup *v1alpha1.Backup, pvc *corev1.Persiste
 					Containers: []corev1.Container{
 						{
 							Name:    "backup",
-							Image:   "alpine:latest", // In production, use a proper backup image
+							Image:   "amazon/aws-cli:latest",
 							Command: backupCommand,
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -282,10 +305,40 @@ func (e *Executor) waitForJob(ctx context.Context, job *batchv1.Job) error {
 
 // executeSnapshotBackup performs a snapshot-based backup
 func (e *Executor) executeSnapshotBackup(ctx context.Context, backup *v1alpha1.Backup, pvc *corev1.PersistentVolumeClaim, config *v1alpha1.BackupConfig) error {
-	// This would integrate with VolumeSnapshot API
-	// For now, this is a placeholder
-	e.log.Info("Snapshot backup not yet implemented, falling back to copy method")
-	return e.executeCopyBackup(ctx, backup, pvc, config)
+	snapshotClassName := config.Spec.SnapshotClassName
+	if snapshotClassName == "" {
+		return fmt.Errorf("snapshot class name is required for snapshot backups")
+	}
+
+	snapshotName := fmt.Sprintf("backup-%s-%s", backup.Name, backup.Spec.PVCName)
+
+	snapshot := &snapshotv1.VolumeSnapshot{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      snapshotName,
+			Namespace: pvc.Namespace,
+			Labels: map[string]string{
+				"bardiup.io/backup": backup.Name,
+				"bardiup.io/pvc":    pvc.Name,
+			},
+		},
+		Spec: snapshotv1.VolumeSnapshotSpec{
+			Source: snapshotv1.VolumeSnapshotSource{
+				PersistentVolumeClaimName: &pvc.Name,
+			},
+			VolumeSnapshotClassName: &snapshotClassName,
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(backup, snapshot, e.client.Scheme()); err != nil {
+		return fmt.Errorf("failed to set owner reference on snapshot: %w", err)
+	}
+
+	if err := e.client.Create(ctx, snapshot); err != nil {
+		return fmt.Errorf("failed to create volume snapshot: %w", err)
+	}
+
+	e.log.Info("Volume snapshot created successfully", "snapshot", snapshot.Name)
+	return nil
 }
 
 // RestoreBackup restores a backup to a PVC
@@ -322,15 +375,19 @@ func (e *Executor) createRestoreJob(backup *v1alpha1.Backup, targetPVC *corev1.P
 	restoreCommand := []string{
 		"/bin/sh",
 		"-c",
-		fmt.Sprintf(`
-			set -e
-			echo "Starting restore from %s to /data"
-			# Download from object storage (simplified)
-			echo "Downloading backup from object storage..."
-			# Extract backup
+		`
+			set -euxo pipefail
+			echo "Starting restore from s3://${S3_BUCKET}/` + backup.Spec.StorageLocation.Path + ` to /data"
+
+			S3_ENDPOINT_FLAG=""
+			if [ -n "${S3_ENDPOINT}" ]; then
+				S3_ENDPOINT_FLAG="--endpoint-url ${S3_ENDPOINT}"
+			fi
+
+			aws s3 cp ${S3_ENDPOINT_FLAG} s3://${S3_BUCKET}/` + backup.Spec.StorageLocation.Path + ` /tmp/backup.tar.gz
 			tar xzf /tmp/backup.tar.gz -C /data
 			echo "Restore completed successfully"
-		`, backup.Spec.StorageLocation.Path),
+		`,
 	}
 
 	job := &batchv1.Job{
@@ -350,7 +407,7 @@ func (e *Executor) createRestoreJob(backup *v1alpha1.Backup, targetPVC *corev1.P
 					Containers: []corev1.Container{
 						{
 							Name:    "restore",
-							Image:   "alpine:latest",
+							Image:   "amazon/aws-cli:latest",
 							Command: restoreCommand,
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -389,23 +446,35 @@ func (e *Executor) createRestoreJob(backup *v1alpha1.Backup, targetPVC *corev1.P
 }
 
 // Helper functions
-func (e *Executor) calculateBackupSize(pvc *corev1.PersistentVolumeClaim) int64 {
-	// In production, this would get the actual backup size
-	// For now, return a placeholder
-	if pvc.Status.Capacity != nil {
-		if capacity, ok := pvc.Status.Capacity[corev1.ResourceStorage]; ok {
-			return capacity.Value()
-		}
+func (e *Executor) getPodLogs(ctx context.Context, pod *corev1.Pod) (string, error) {
+	podLogOpts := corev1.PodLogOptions{}
+	req := e.clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &podLogOpts)
+	podLogs, err := req.Stream(ctx)
+	if err != nil {
+		return "", fmt.Errorf("error in opening stream: %w", err)
 	}
-	return 0
+	defer podLogs.Close()
+
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, podLogs)
+	if err != nil {
+		return "", fmt.Errorf("error in copy information from podLogs to buf: %w", err)
+	}
+	return buf.String(), nil
 }
 
-func (e *Executor) generateChecksum() string {
-	// In production, this would calculate the actual checksum
-	// For now, return a placeholder
-	hash := sha256.New()
-	hash.Write([]byte(time.Now().String()))
-	return hex.EncodeToString(hash.Sum(nil))
+func (e *Executor) parseBackupMetadata(logs string) (int64, string) {
+	var size int64
+	var checksum string
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.HasPrefix(line, "Backup Size: ") {
+			fmt.Sscanf(line, "Backup Size: %d", &size)
+		}
+		if strings.HasPrefix(line, "Backup Checksum: ") {
+			fmt.Sscanf(line, "Backup Checksum: %s", &checksum)
+		}
+	}
+	return size, checksum
 }
 
 func ptr[T any](v T) *T {

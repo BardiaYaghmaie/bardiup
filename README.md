@@ -40,7 +40,8 @@ Unlike traditional backup solutions with simple retention periods, Bardiup allow
 # For now, install from local chart
 helm install bardiup ./charts/bardiup \
   --namespace bardiup-system \
-  --create-namespace
+  --create-namespace \
+  --dependency-update
 ```
 
 ## 🚀 Quick Start
@@ -113,6 +114,7 @@ spec:
 | `storageBackend` | Where to store backups (S3, etc.) | Yes |
 | `retentionPolicy` | Dynamic retention configuration | Yes |
 | `backupMethod` | Method to use (copy/snapshot) | No |
+| `snapshotClassName` | `VolumeSnapshotClass` for snapshot backups | No |
 | `paused` | Pause backup schedule | No |
 
 `StorageLocation.Path` always stores a **relative key** (no prefix). The S3 backend automatically prepends the configured prefix, preventing double-prefix bugs.

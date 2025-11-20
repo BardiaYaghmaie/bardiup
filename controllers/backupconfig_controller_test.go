@@ -16,8 +16,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	clifake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestFindMatchingPVCs(t *testing.T) {
@@ -144,7 +145,7 @@ func newTestReconciler(t *testing.T, objs ...client.Object) *BackupConfigReconci
 	_ = batchv1.AddToScheme(scheme)
 	_ = v1alpha1.AddToScheme(scheme)
 
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	fakeClient := clifake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	logger := testr.New(t)
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -152,14 +153,15 @@ func newTestReconciler(t *testing.T, objs ...client.Object) *BackupConfigReconci
 		Client:    fakeClient,
 		Scheme:    scheme,
 		Log:       logger,
+		Clientset: nil,
 		scheduler: cron.New(),
 		executors: make(map[string]BackupExecutor),
 		retention: retention.NewManager(fakeClient, logger),
 		lastRun:   make(map[string]time.Time),
-		executorFactory: func(client.Client, storage.Backend, logr.Logger) BackupExecutor {
+		executorFactory: func(c client.Client, cs *kubernetes.Clientset, backend storage.Backend, log logr.Logger) BackupExecutor {
 			return newFakeExecutor(0)
 		},
-		storageFactory: func(context.Context, client.Client, *v1alpha1.S3Backend, string, logr.Logger) (storage.Backend, error) {
+		storageFactory: func(ctx context.Context, c client.Client, s3 *v1alpha1.S3Backend, namespace, prefix string, log logr.Logger) (storage.Backend, error) {
 			return nil, nil
 		},
 		now: func() time.Time { return now },
