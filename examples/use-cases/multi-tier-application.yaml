@@ -1,0 +1,167 @@
+# =============================================================================
+# USE CASE: Multi-Tier Application (Different backup strategies per tier)
+# =============================================================================
+#
+# Scenario: E-commerce application with different data criticality levels
+#
+# Architecture:
+# - Database tier: Critical, needs frequent backups
+# - Cache tier: Non-critical, minimal backups
+# - User uploads: Important but less frequent changes
+# - Session data: Ephemeral, no backup needed
+#
+# This example shows how to apply different backup strategies to different
+# components of the same application.
+#
+# =============================================================================
+
+# Shared credentials (replicate to each namespace or use secret sync)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backup-credentials
+  namespace: ecommerce
+type: Opaque
+stringData:
+  accessKeyId: "REPLACE_WITH_YOUR_ACCESS_KEY"
+  secretAccessKey: "REPLACE_WITH_YOUR_SECRET_KEY"
+---
+# =============================================================================
+# TIER 1: Database (Critical) - Aggressive backup strategy
+# =============================================================================
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: ecommerce-database
+  namespace: ecommerce
+  labels:
+    app: ecommerce
+    tier: database
+    criticality: high
+spec:
+  pvcSelector:
+    namespace: ecommerce
+    matchLabels:
+      app: ecommerce
+      component: database
+
+  # Every 2 hours for critical data
+  schedule: "0 */2 * * *"
+
+  backupMethod: copy
+
+  storageBackend:
+    type: s3
+    prefix: ecommerce/database
+    s3:
+      bucket: ecommerce-backups
+      region: us-west-2
+      credentialsSecret: backup-credentials
+
+  retentionPolicy:
+    daily:
+      keep: 12       # 12 x 2-hourly = full day coverage
+      selectionStrategy: newest
+    weekly:
+      keep: 7        # Daily for past week
+      selectionStrategy: distributed
+    monthly:
+      keep: 4        # Weekly for past month
+      selectionStrategy: distributed
+    yearly:
+      keep: 12       # Monthly for past year
+      selectionStrategy: distributed
+---
+# =============================================================================
+# TIER 2: User Uploads (Important) - Moderate backup strategy
+# =============================================================================
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: ecommerce-uploads
+  namespace: ecommerce
+  labels:
+    app: ecommerce
+    tier: storage
+    criticality: medium
+spec:
+  pvcSelector:
+    namespace: ecommerce
+    matchLabels:
+      app: ecommerce
+      component: uploads
+
+  # Daily backup at 3 AM (off-peak)
+  schedule: "0 3 * * *"
+
+  backupMethod: copy
+
+  storageBackend:
+    type: s3
+    prefix: ecommerce/uploads
+    s3:
+      bucket: ecommerce-backups
+      region: us-west-2
+      credentialsSecret: backup-credentials
+
+  retentionPolicy:
+    daily:
+      keep: 7        # Past week
+      selectionStrategy: newest
+    weekly:
+      keep: 4        # Past month
+      selectionStrategy: distributed
+    monthly:
+      keep: 6        # Past 6 months
+      selectionStrategy: distributed
+---
+# =============================================================================
+# TIER 3: Cache (Low Priority) - Minimal backup strategy
+# =============================================================================
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: ecommerce-cache
+  namespace: ecommerce
+  labels:
+    app: ecommerce
+    tier: cache
+    criticality: low
+spec:
+  pvcSelector:
+    namespace: ecommerce
+    matchLabels:
+      app: ecommerce
+      component: redis-cache
+
+  # Weekly backup - cache can be rebuilt
+  schedule: "0 4 * * 0"  # Sunday at 4 AM
+
+  backupMethod: copy
+
+  storageBackend:
+    type: s3
+    prefix: ecommerce/cache
+    s3:
+      bucket: ecommerce-backups
+      region: us-west-2
+      credentialsSecret: backup-credentials
+
+  retentionPolicy:
+    # Just keep last 2 weekly backups
+    weekly:
+      keep: 2
+      selectionStrategy: newest
+---
+# =============================================================================
+# NOTE: Session Data - No BackupConfig needed
+# =============================================================================
+# Session data is ephemeral and doesn't need backup.
+# If you have a PVC for sessions, simply don't create a BackupConfig for it,
+# or use labels that exclude it from selection:
+#
+# PVC labels:
+#   app: ecommerce
+#   component: sessions
+#   backup: disabled    # Not selected by any BackupConfig above
+

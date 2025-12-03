@@ -228,13 +228,33 @@ Controller logs include entries when a backup is marked for deletion.
 
 ## Restoring Data
 
-1. Identify the `Backup` resource you want to restore.
-2. Create (or select) a target PVC with equal or larger capacity.
-3. Use the `RestoreBackup` helper (future automation) or craft a job similar to `Executor.createRestoreJob`.
-   - Download data from object storage (using credentials).
-   - Extract archive into the PVC.
+> **📚 For comprehensive restore documentation, see [RESTORE_GUIDE.md](RESTORE_GUIDE.md)**
+
+### Quick Restore Steps
+
+1. Identify the `Backup` resource you want to restore:
+   ```bash
+   kubectl get backups -l bardiup.io/pvc=<pvc-name> --sort-by=.status.completionTime
+   ```
+
+2. Get the backup storage path:
+   ```bash
+   kubectl get backup <backup-name> -o jsonpath='{.spec.storageLocation.path}'
+   ```
+
+3. Create (or select) a target PVC with equal or larger capacity.
+
+4. Run a restore job (see [RESTORE_GUIDE.md](RESTORE_GUIDE.md) for templates).
 
 > **Note:** The provided executor restores via a Kubernetes Job. Adapt the job command to your workload requirements.
+
+For detailed restore procedures including:
+- Cross-cluster restore
+- Point-in-time recovery
+- Troubleshooting
+- Best practices
+
+See the full [Restore Guide](RESTORE_GUIDE.md).
 
 ---
 

@@ -1,0 +1,66 @@
+# =============================================================================
+# USE CASE: Development/Staging Environment
+# =============================================================================
+#
+# Scenario: Development environment with lightweight backup needs
+#
+# Requirements:
+# - Daily backups during business hours
+# - Keep only last 3-5 backups (recent recovery only)
+# - Minimal storage cost
+# - Quick to set up and forget
+#
+# Storage Estimate:
+# - Only 3-5 backups at any time
+# - Perfect for dev/test where historical data isn't critical
+#
+# =============================================================================
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  namespace: development
+type: Opaque
+stringData:
+  accessKeyId: "minioadmin"
+  secretAccessKey: "minioadmin"
+---
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: dev-environment-backup
+  namespace: development
+  labels:
+    environment: development
+    backup-tier: standard
+spec:
+  # Select all PVCs in dev namespace with backup label
+  pvcSelector:
+    namespace: development
+    matchLabels:
+      backup: enabled
+
+  # Daily backup at 9 AM on weekdays only
+  schedule: "0 9 * * 1-5"
+
+  backupMethod: copy
+
+  # Use local MinIO for cost savings
+  storageBackend:
+    type: s3
+    prefix: dev-backups
+    s3:
+      bucket: dev-backup-bucket
+      region: us-east-1
+      endpoint: http://minio.minio.svc.cluster.local:9000
+      forcePathStyle: true
+      credentialsSecret: minio-credentials
+
+  # Minimal retention - just keep recent backups
+  retentionPolicy:
+    daily:
+      keep: 3
+      selectionStrategy: newest
+    # No weekly/monthly/yearly - we don't need historical data for dev
+

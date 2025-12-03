@@ -1,0 +1,90 @@
+# =============================================================================
+# USE CASE: Production Database Backup Strategy
+# =============================================================================
+#
+# Scenario: Production PostgreSQL database requiring comprehensive backup coverage
+#
+# Requirements:
+# - Hourly backups for point-in-time recovery within the day
+# - Daily backups for the past week
+# - Weekly backups for the past month
+# - Monthly backups for the past year
+# - Yearly backups for compliance (5 years)
+#
+# Storage Estimate:
+# - ~50 backups total (24 hourly + 7 daily + 4 weekly + 12 monthly + 5 yearly)
+# - vs. 8,760 backups if keeping all hourly for a year!
+#
+# =============================================================================
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s3-credentials
+  namespace: production
+type: Opaque
+stringData:
+  accessKeyId: "REPLACE_WITH_YOUR_ACCESS_KEY"
+  secretAccessKey: "REPLACE_WITH_YOUR_SECRET_KEY"
+---
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: postgres-production
+  namespace: production
+  labels:
+    app: postgresql
+    environment: production
+    backup-tier: critical
+spec:
+  # Select the PostgreSQL data PVC
+  pvcSelector:
+    namespace: production
+    matchLabels:
+      app: postgresql
+      component: primary
+
+  # Hourly backups for granular recovery
+  schedule: "0 * * * *"  # Every hour at minute 0
+
+  # Backup method
+  backupMethod: copy
+
+  # S3 storage configuration
+  storageBackend:
+    type: s3
+    prefix: production/postgresql
+    s3:
+      bucket: company-backups
+      region: us-east-1
+      credentialsSecret: s3-credentials
+      # For cross-region redundancy, consider S3 replication rules
+
+  # Comprehensive retention policy
+  retentionPolicy:
+    # Keep 24 hourly backups (full day coverage)
+    daily:
+      keep: 24
+      selectionStrategy: newest
+
+    # Keep 7 daily backups (past week)
+    weekly:
+      keep: 7
+      selectionStrategy: distributed
+
+    # Keep 4 weekly backups (past month)
+    monthly:
+      keep: 4
+      selectionStrategy: distributed
+
+    # Keep 12 monthly backups (past year)
+    yearly:
+      keep: 12
+      selectionStrategy: distributed
+
+    # Keep 5 yearly backups (compliance requirement)
+    custom:
+      - periodDays: 365
+        keep: 5
+        selectionStrategy: oldest  # Keep earliest for audit trail
+

@@ -1,0 +1,119 @@
+# =============================================================================
+# USE CASE: Compliance / Regulatory (7-Year Retention)
+# =============================================================================
+#
+# Scenario: Financial or healthcare data requiring long-term retention
+#
+# Requirements:
+# - Must retain data for 7 years (84 months) for regulatory compliance
+# - Monthly backups are sufficient for audit purposes
+# - Use oldest selection to maintain original data timestamps
+# - Immutable storage recommended (enable S3 Object Lock)
+#
+# Compliance Frameworks:
+# - SOX (Sarbanes-Oxley): 7 years
+# - HIPAA: 6 years
+# - GDPR: Varies, but long retention for legitimate business purposes
+# - PCI-DSS: 1 year minimum, but 7 years recommended
+#
+# Storage Estimate:
+# - 84 monthly backups
+# - Much cheaper than keeping all daily backups (2,555 over 7 years!)
+#
+# =============================================================================
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: compliance-s3-credentials
+  namespace: finance
+type: Opaque
+stringData:
+  accessKeyId: "REPLACE_WITH_YOUR_ACCESS_KEY"
+  secretAccessKey: "REPLACE_WITH_YOUR_SECRET_KEY"
+---
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: financial-records-compliance
+  namespace: finance
+  labels:
+    compliance: sox
+    data-classification: confidential
+    backup-tier: compliance
+  annotations:
+    description: "7-year retention for SOX compliance"
+    owner: finance-team@company.com
+    review-date: "2026-01-01"
+spec:
+  # Select financial application PVCs
+  pvcSelector:
+    namespace: finance
+    matchLabels:
+      app: financial-system
+      data-type: records
+
+  # Monthly backup on the 1st at 1 AM
+  schedule: "0 1 1 * *"
+
+  backupMethod: copy
+
+  storageBackend:
+    type: s3
+    prefix: compliance/finance
+    s3:
+      bucket: company-compliance-archive
+      region: us-east-1
+      credentialsSecret: compliance-s3-credentials
+      # IMPORTANT: Enable S3 Object Lock on this bucket for immutability
+      # This prevents accidental or malicious deletion
+
+  retentionPolicy:
+    # 84 monthly backups = 7 years
+    monthly:
+      keep: 84
+      selectionStrategy: oldest  # Keep original backups for audit trail
+
+    # Also keep yearly snapshots for quick reference
+    yearly:
+      keep: 7
+      selectionStrategy: distributed
+---
+# =============================================================================
+# Additional: Quarterly audit checkpoints
+# =============================================================================
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: quarterly-audit-checkpoint
+  namespace: finance
+  labels:
+    compliance: sox
+    backup-tier: audit
+spec:
+  pvcSelector:
+    namespace: finance
+    matchLabels:
+      app: financial-system
+      data-type: audit-logs
+
+  # Quarterly: 1st of Jan, Apr, Jul, Oct at 2 AM
+  schedule: "0 2 1 1,4,7,10 *"
+
+  backupMethod: copy
+
+  storageBackend:
+    type: s3
+    prefix: compliance/audit-checkpoints
+    s3:
+      bucket: company-compliance-archive
+      region: us-east-1
+      credentialsSecret: compliance-s3-credentials
+
+  retentionPolicy:
+    # Keep 28 quarterly backups (7 years)
+    custom:
+      - periodDays: 90
+        keep: 28
+        selectionStrategy: oldest
+

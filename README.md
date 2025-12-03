@@ -1,65 +1,105 @@
-# Bardiup - Dynamic PVC Backup Controller for Kubernetes
+# Bardiup - Smart Kubernetes PVC Backups
 
-Bardiup is a Kubernetes operator that provides automated backup of Persistent Volume Claims (PVCs) with sophisticated dynamic retention policies and object storage compatibility.
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.25+-326CE5?style=flat&logo=kubernetes)](https://kubernetes.io/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-## 🌟 Key Features
+**Stop paying for backups you don't need. Keep the ones you do.**
 
-### Dynamic Retention Policies (The Killer Feature!)
-Unlike traditional backup solutions with simple retention periods, Bardiup allows you to configure sophisticated retention policies that keep backups strategically distributed over time:
+Bardiup automatically backs up Kubernetes PVCs with intelligent retention policies that keep backups strategically distributed over time—saving storage costs while maintaining comprehensive recovery points.
 
-- **Multi-tier Retention**: Define different retention rules for daily, weekly, monthly, yearly, and custom periods
-- **Smart Selection**: Choose how backups are selected for retention (newest, oldest, or distributed)
-- **Custom Periods**: Define your own retention periods (e.g., quarterly, bi-weekly)
-- **Automatic Cleanup**: Old backups are automatically deleted based on your retention policy
+---
 
-**Example**: Keep daily backups for 7 days, but also keep 1 backup from a month ago, 1 from three months ago, and 1 from a year ago - all configurable!
+## ✨ The Problem
 
-### Other Features
-- 🗄️ **Object Storage Support**: S3 and S3-compatible storage (MinIO, etc.)
-- 📅 **Cron-based Scheduling**: Flexible backup scheduling using cron expressions
-- 🏷️ **Label-based Selection**: Select PVCs to backup using labels or names
-- 🔄 **Multiple Backup Methods**: Support for copy-based and snapshot-based backups
-- 🎯 **Namespace Scoped**: Backup PVCs in specific namespaces
-- ⏸️ **Pause/Resume**: Ability to pause and resume backup schedules
-- 📊 **Status Tracking**: Track backup status, last backup time, and next scheduled time
+Traditional backup solutions force you to choose between:
 
-## 📦 Installation
+| Approach | Problem |
+|----------|---------|
+| **Keep everything** | 💸 Exploding storage costs |
+| **Simple TTL** (e.g., "keep 30 days") | 📅 Lose important historical recovery points |
+| **Manual cleanup** | ⏰ Time-consuming, error-prone |
+
+## ✨ The Solution
+
+Bardiup's **dynamic retention** lets you automatically keep:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           RETENTION TIMELINE                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  NOW ◄─────────── 7 days ───────────► ◄── 4 weeks ──► ◄─── 12 months ───►  │
+│   │                                                                         │
+│   ▼    Daily backups (7)         Weekly (4)        Monthly (12)    Yearly  │
+│  [■■■■■■■]                    [■   ■   ■   ■]    [■ ■ ■ ■ ■ ■ ...]   [■■■] │
+│                                                                             │
+│  Recent recovery points    Medium-term safety    Long-term compliance      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **7 daily backups** for recent recovery
+- **4 weekly backups** for the past month
+- **12 monthly backups** for the past year
+- **5 yearly backups** for compliance
+- **Custom periods** (quarterly, bi-weekly, etc.)
+- **All automatically managed** with zero manual cleanup
+
+---
+
+## 🆚 Why Bardiup?
+
+| Feature | Bardiup | Velero | Stash | Kasten K10 |
+|---------|:-------:|:------:|:-----:|:----------:|
+| **Dynamic Retention** (GFS-style) | ✅ Advanced | ❌ Basic TTL | ⚠️ Simple | ✅ Yes |
+| **Cost** | Free | Free | Free | $$$$ |
+| **PVC-Focused** | ✅ | ⚠️ Cluster-wide | ✅ | ✅ |
+| **Custom Retention Periods** | ✅ | ❌ | ❌ | ⚠️ |
+| **Selection Strategies** | ✅ newest/oldest/distributed | ❌ | ❌ | ⚠️ |
+| **S3 Compatible** | ✅ | ✅ | ✅ | ✅ |
+| **Lightweight** | ✅ Single controller | ⚠️ Multiple components | ⚠️ | ❌ Heavy |
+
+**Bardiup is ideal when you need:**
+- Sophisticated backup retention without enterprise costs
+- PVC-focused backups with granular control
+- GrandFather-Father-Son (GFS) style retention
+- Storage cost optimization through smart cleanup
+
+---
+
+## 🚀 Quick Start (5 minutes)
 
 ### Prerequisites
-- Kubernetes 1.19+
+- Kubernetes 1.25+
 - Helm 3+
-- Object storage (S3, MinIO, etc.)
+- S3-compatible storage (AWS S3, MinIO, etc.)
 
-### Using Helm
+### 1. Install Bardiup
 
 ```bash
-# Add the bardiup repository (when published)
-# helm repo add bardiup https://bardiup.github.io/charts
-# helm repo update
-
-# For now, install from local chart
+# Create namespace and install
 helm install bardiup ./charts/bardiup \
   --namespace bardiup-system \
   --create-namespace
 ```
 
-## 🚀 Quick Start
-
-### 1. Create S3 Credentials Secret
+### 2. Create Storage Credentials
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
   name: s3-credentials
-  namespace: bardiup-system
+  namespace: default  # Same namespace as your PVCs
 type: Opaque
 stringData:
   accessKeyId: "your-access-key"
   secretAccessKey: "your-secret-key"
 ```
 
-### 2. Create a BackupConfig with Dynamic Retention
+### 3. Create Your First BackupConfig
 
 ```yaml
 apiVersion: bardiup.io/v1alpha1
@@ -82,208 +122,405 @@ spec:
       region: us-west-2
       credentialsSecret: s3-credentials
   
-  # Dynamic retention configuration - THE MAGIC!
   retentionPolicy:
-    daily:
-      keep: 7              # Keep 7 daily backups
-      selectionStrategy: newest
-    weekly:
-      keep: 4              # Keep 4 weekly backups
-      selectionStrategy: distributed
-    monthly:
-      keep: 12             # Keep 12 monthly backups
-      selectionStrategy: distributed
-    yearly:
-      keep: 5              # Keep 5 yearly backups
-      selectionStrategy: distributed
-    custom:
-      - periodDays: 90     # Quarterly backups
-        keep: 8
-        selectionStrategy: distributed
+    daily:   { keep: 7,  selectionStrategy: newest }
+    weekly:  { keep: 4,  selectionStrategy: distributed }
+    monthly: { keep: 12, selectionStrategy: distributed }
+    yearly:  { keep: 5,  selectionStrategy: distributed }
 ```
 
-## 📋 Configuration
-
-### BackupConfig Specification
-
-| Field | Description | Required |
-|-------|-------------|----------|
-| `pvcSelector` | Selects which PVCs to backup | Yes |
-| `schedule` | Cron expression for backup schedule | Yes |
-| `storageBackend` | Where to store backups (S3, etc.) | Yes |
-| `retentionPolicy` | Dynamic retention configuration | Yes |
-| `backupMethod` | Method to use (copy/snapshot) | No |
-| `paused` | Pause backup schedule | No |
-
-`StorageLocation.Path` always stores a **relative key** (no prefix). The S3 backend automatically prepends the configured prefix, preventing double-prefix bugs.
-
-### Retention Policy Options
-
-Each retention tier (daily, weekly, monthly, yearly, custom) supports:
-
-- `keep`: Number of backups to retain for this period
-- `selectionStrategy`: How to select which backups to keep
-  - `newest`: Keep the most recent backups
-  - `oldest`: Keep the earliest backups
-  - `distributed`: Distribute backups across the time period
-
-### Selection Strategy Examples
-
-- **newest**: If you have 100 daily backups and `keep: 7`, keeps the 7 most recent backups.
-- **distributed**: If you have 365 daily backups (1 year) and monthly `keep: 12`, it will keep 1 backup per month, distributed evenly.
-- **oldest**: Useful for compliance where you need to retain the earliest backups.
-
-## 📚 Documentation
-
-Full, task-oriented documentation (installation, configuration, retention design, testing, troubleshooting, and restore workflows) lives in [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md).
-
-## 🧪 Local Testing with Kind
-
-### 1. Create Kind Cluster
+### 4. Verify It's Working
 
 ```bash
-kind create cluster --name kind-bardiup
-```
-
-### 2. Deploy MinIO for Testing
-
-```bash
-kubectl apply -f examples/minio-deployment.yaml
-```
-
-### 3. Install Bardiup
-
-```bash
-# Build and load image to kind
-docker build -t bardiup:latest .
-kind load docker-image bardiup:latest --name kind-bardiup
-
-# Install with Helm
-helm install bardiup ./charts/bardiup \
-  --namespace bardiup-system \
-  --create-namespace \
-  --set image.repository=bardiup \
-  --set image.tag=latest \
-  --set image.pullPolicy=Never
-```
-
-### 4. Create Test PVC and BackupConfig
-
-```yaml
-# test-pvc.yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: test-pvc
-  namespace: default
-  labels:
-    test: backup
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
-```
-
-```bash
-kubectl apply -f test-pvc.yaml
-kubectl apply -f examples/minio-deployment.yaml
-```
-
-### 5. Check Backup Status
-
-```bash
-# List BackupConfigs
+# Check BackupConfig status
 kubectl get backupconfigs
 
-# List Backups
-kubectl get backups -A
+# Watch backups being created
+kubectl get backups -w
 
 # Check controller logs
 kubectl logs -n bardiup-system deployment/bardiup -f
 ```
 
-## 🧪 Testing
+---
 
-- **Unit & controller tests** (retention logic, PVC selection, backup creation):
+## 📋 Key Features
 
-  ```bash
-  go test ./...
-  ```
+### 🎯 Dynamic Retention Policies
 
-- **End-to-end tests on kind**:
-  1. Deploy controller and CRDs (`helm install ...`).
-  2. Apply `examples/test-pvc.yaml` and `examples/minio-deployment.yaml`.
-  3. Wait for backups to appear via `kubectl get backups -A`.
+The killer feature! Configure sophisticated retention that keeps backups strategically distributed:
 
-Testing guidance, expected outputs, and troubleshooting steps are fully documented in [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md#testing).
-
-## 🏗️ Architecture
-
-Bardiup consists of:
-
-1. **Controller**: Manages BackupConfig resources and schedules backups
-2. **Retention Manager**: Implements sophisticated retention logic
-3. **Storage Backend**: Interfaces with object storage (S3, etc.)
-4. **Backup Executor**: Performs the actual backup operations
-
-## 🔧 Development
-
-### Prerequisites
-- Go 1.21+
-- Docker
-- Kind (for local testing)
-
-### Building
-
-```bash
-# Download dependencies
-go mod download
-
-# Run gofmt & tests
-gofmt -w $(git ls-files '*.go')
-go test ./...
-
-# Build binary
-go build -o bin/manager cmd/main.go
-
-# Build Docker image
-docker build -t bardiup:latest .
+```yaml
+retentionPolicy:
+  daily:
+    keep: 7                    # Keep 7 daily backups
+    selectionStrategy: newest  # Most recent ones
+  weekly:
+    keep: 4
+    selectionStrategy: distributed  # Spread across weeks
+  monthly:
+    keep: 12
+    selectionStrategy: distributed
+  yearly:
+    keep: 5
+    selectionStrategy: oldest  # Keep earliest for compliance
+  custom:
+    - periodDays: 90           # Quarterly backups
+      keep: 8
+      selectionStrategy: distributed
 ```
 
-### Running Locally
+**Selection Strategies:**
+- `newest` - Keep the most recent backups in the period
+- `oldest` - Keep the earliest backups (compliance use cases)
+- `distributed` - Spread backups evenly across the time window
 
-```bash
-# Install CRDs
-kubectl apply -f charts/bardiup/crds/
+### 🗄️ S3-Compatible Storage
 
-# Run controller locally
-go run cmd/main.go
+Works with any S3-compatible storage:
+- AWS S3
+- MinIO
+- Ceph RGW
+- DigitalOcean Spaces
+- Backblaze B2
+- Wasabi
+
+### 📅 Flexible Scheduling
+
+Use any cron expression:
+
+```yaml
+schedule: "0 */6 * * *"   # Every 6 hours
+schedule: "0 2 * * *"     # Daily at 2 AM
+schedule: "*/30 * * * *"  # Every 30 minutes (testing)
 ```
 
-## 📝 Examples
+### 🏷️ Smart PVC Selection
 
-Check the `examples/` directory for:
-- MinIO deployment for local testing
-- Various BackupConfig examples with different retention policies
-- S3 credentials secret template
+Select PVCs by labels or names:
 
-## 🤝 Contributing
+```yaml
+pvcSelector:
+  namespace: production
+  matchLabels:
+    tier: database
+    backup: enabled
+```
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Or by specific names:
 
-## 📜 License
+```yaml
+pvcSelector:
+  namespace: default
+  matchNames:
+    - postgres-data
+    - redis-data
+```
 
-Apache 2.0
+### ⏸️ Pause/Resume
 
-## 🙏 Acknowledgments
+Temporarily disable backups without deleting configuration:
 
-Built with:
-- [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime)
-- [AWS SDK for Go](https://github.com/aws/aws-sdk-go-v2)
-- [cron](https://github.com/robfig/cron)
+```yaml
+spec:
+  paused: true
+```
 
 ---
 
-**Bardiup** - Smart PVC backups with dynamic retention for Kubernetes 🚀
+## 📖 Example Use Cases
+
+### 🗃️ Database Backup Strategy
+
+For production databases requiring comprehensive coverage:
+
+```yaml
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: production-db-backup
+spec:
+  pvcSelector:
+    namespace: production
+    matchLabels:
+      app: postgresql
+  
+  schedule: "0 * * * *"  # Hourly
+  
+  storageBackend:
+    type: s3
+    prefix: prod-db
+    s3:
+      bucket: company-backups
+      region: us-east-1
+      credentialsSecret: aws-credentials
+  
+  retentionPolicy:
+    daily:   { keep: 24, selectionStrategy: newest }     # 24 hourly for today
+    weekly:  { keep: 7,  selectionStrategy: distributed } # 7 daily for past week
+    monthly: { keep: 4,  selectionStrategy: distributed } # 4 weekly for past month
+    yearly:  { keep: 12, selectionStrategy: distributed } # 12 monthly for past year
+```
+
+### 💻 Development Environment
+
+Lightweight retention for dev/staging:
+
+```yaml
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: dev-backup
+spec:
+  pvcSelector:
+    namespace: development
+    matchLabels:
+      env: dev
+  
+  schedule: "0 9 * * 1-5"  # Weekdays at 9 AM
+  
+  storageBackend:
+    type: s3
+    prefix: dev-backups
+    s3:
+      bucket: dev-bucket
+      region: us-west-2
+      endpoint: http://minio.minio.svc:9000
+      forcePathStyle: true
+      credentialsSecret: minio-credentials
+  
+  retentionPolicy:
+    daily: { keep: 3, selectionStrategy: newest }  # Just last 3 backups
+```
+
+### 📜 Compliance (7-Year Retention)
+
+For regulatory requirements:
+
+```yaml
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: compliance-backup
+spec:
+  pvcSelector:
+    namespace: finance
+    matchLabels:
+      compliance: required
+  
+  schedule: "0 0 1 * *"  # Monthly on the 1st
+  
+  storageBackend:
+    type: s3
+    prefix: compliance
+    s3:
+      bucket: compliance-archive
+      region: us-east-1
+      credentialsSecret: s3-credentials
+  
+  retentionPolicy:
+    monthly: { keep: 84, selectionStrategy: oldest }  # 7 years of monthly backups
+```
+
+---
+
+## 🔄 Restoring Data
+
+> **📚 Full restore documentation:** [docs/RESTORE_GUIDE.md](docs/RESTORE_GUIDE.md)
+
+### Quick Restore Steps
+
+1. **Find the backup to restore:**
+   ```bash
+   kubectl get backups -n <namespace> -o wide
+   ```
+
+2. **Get backup details:**
+   ```bash
+   kubectl describe backup <backup-name>
+   # Note the spec.storageLocation.path
+   ```
+
+3. **Create a restore job:**
+   ```bash
+   kubectl apply -f - <<EOF
+   apiVersion: batch/v1
+   kind: Job
+   metadata:
+     name: restore-job
+     namespace: <namespace>
+   spec:
+     template:
+       spec:
+         containers:
+         - name: restore
+           image: amazon/aws-cli
+           command: ["/bin/sh", "-c"]
+           args:
+           - |
+             aws s3 cp s3://<bucket>/<prefix>/<path> /restore/backup.tar.gz
+             tar -xzf /restore/backup.tar.gz -C /restore/data
+           volumeMounts:
+           - name: target-pvc
+             mountPath: /restore/data
+           - name: temp
+             mountPath: /restore
+         volumes:
+         - name: target-pvc
+           persistentVolumeClaim:
+             claimName: <target-pvc>
+         - name: temp
+           emptyDir: {}
+         restartPolicy: Never
+   EOF
+   ```
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              KUBERNETES CLUSTER                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────┐         ┌─────────────────┐                           │
+│  │  BackupConfig   │────────▶│   Controller    │                           │
+│  │      CR         │         │                 │                           │
+│  └─────────────────┘         └────────┬────────┘                           │
+│                                       │                                     │
+│                    ┌──────────────────┼──────────────────┐                 │
+│                    │                  │                  │                 │
+│                    ▼                  ▼                  ▼                 │
+│           ┌────────────────┐ ┌───────────────┐ ┌─────────────────┐        │
+│           │    Backup      │ │   Retention   │ │     Backup      │        │
+│           │   Executor     │ │    Manager    │ │      Jobs       │        │
+│           └───────┬────────┘ └───────────────┘ └────────┬────────┘        │
+│                   │                                      │                 │
+│                   │         ┌─────────────────┐         │                 │
+│                   └────────▶│  Storage Backend│◀────────┘                 │
+│                             │     (S3 API)    │                            │
+│                             └────────┬────────┘                            │
+│                                      │                                     │
+└──────────────────────────────────────┼─────────────────────────────────────┘
+                                       │
+                                       ▼
+                              ┌─────────────────┐
+                              │   S3 / MinIO    │
+                              │  Object Storage │
+                              └─────────────────┘
+```
+
+**Components:**
+
+| Component | Responsibility |
+|-----------|----------------|
+| **Controller** | Reconciles BackupConfig, schedules backups, manages lifecycle |
+| **Retention Manager** | Implements GFS-style retention logic, determines what to keep/delete |
+| **Backup Executor** | Creates Kubernetes Jobs to backup PVC data |
+| **Storage Backend** | Pluggable interface for object storage operations |
+
+---
+
+## 📚 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [User Guide](docs/USER_GUIDE.md) | Complete installation, configuration, and operations guide |
+| [Restore Guide](docs/RESTORE_GUIDE.md) | Detailed restore procedures and scenarios |
+| [Roadmap](docs/ROADMAP.md) | Planned features and development timeline |
+| [Examples](examples/) | Ready-to-use YAML manifests |
+
+---
+
+## 🧪 Local Development & Testing
+
+### Quick Local Setup with Kind
+
+```bash
+# Create cluster
+kind create cluster --name bardiup-dev
+
+# Build and load image
+docker build -t bardiup:latest .
+kind load docker-image bardiup:latest --name bardiup-dev
+
+# Deploy MinIO for testing
+kubectl apply -f examples/minio-deployment.yaml
+
+# Install Bardiup
+kubectl apply -f charts/bardiup/crds/
+helm install bardiup ./charts/bardiup \
+  --namespace bardiup-system --create-namespace \
+  --set image.repository=bardiup \
+  --set image.tag=latest \
+  --set image.pullPolicy=Never
+
+# Create test PVC and BackupConfig
+kubectl apply -f examples/test-pvc.yaml
+```
+
+### Running Tests
+
+```bash
+# Unit tests
+go test ./...
+
+# With coverage
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+```
+
+---
+
+## 🛤️ Roadmap
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full roadmap. Highlights:
+
+### Coming Soon
+- 🔐 Encryption at rest (client-side encryption before upload)
+- 📊 Prometheus metrics & alerting
+- 🪝 Pre/post backup hooks (application-aware backups)
+- 🔄 Cross-cluster restore support
+
+### Planned
+- 📈 Incremental backups
+- ☁️ Azure Blob & GCS storage backends
+- 🗜️ Compression options
+- ✅ Automated backup verification
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+```bash
+# Development workflow
+git clone https://github.com/your-org/bardiup.git
+cd bardiup
+go mod download
+go test ./...
+```
+
+---
+
+## 📜 License
+
+Apache 2.0 - see [LICENSE](LICENSE) for details.
+
+---
+
+## 🔑 Keywords
+
+`kubernetes` `pvc backup` `s3 backup` `retention policy` `grandfather-father-son` `gfs backup` `velero alternative` `kubernetes backup operator` `automated backup cleanup` `cost-effective kubernetes backup`
+
+---
+
+<p align="center">
+  <strong>Bardiup</strong> - Smart PVC backups with dynamic retention for Kubernetes 🚀
+  <br>
+  <a href="docs/USER_GUIDE.md">Documentation</a> •
+  <a href="examples/">Examples</a> •
+  <a href="docs/ROADMAP.md">Roadmap</a>
+</p>
