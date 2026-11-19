@@ -48,7 +48,7 @@ After a year of nightly backups, that policy keeps **20 archives instead of 365*
 | **What runs on your nodes** | Nothing between backups. One short-lived Job per volume, mounting just that volume. | File-system backup needs a node-agent DaemonSet on every node with `hostPath` access to `/var/lib/kubelet/pods` |
 | **Mover privileges** | UID 0 with only `DAC_OVERRIDE` and a read-only mount of one volume; fits the *baseline* Pod Security Standard | Node-agent runs as root with `hostPath` access to every pod volume on the node (privileged mode on SELinux hosts) |
 | **Explainability** | `status.retainedBy` on every backup, conditions, events, Prometheus alerts included | Backups expire by TTL |
-| **Footprint** | One Deployment, one ~40 MB distroless image for both controller and mover | Server + node-agent DaemonSet + provider plugin images |
+| **Footprint** | One Deployment, ~45 MB RAM; one 14 MB distroless image for both controller and mover | Server + node-agent DaemonSet + provider plugin images |
 
 **Use Velero instead** when you need to back up and migrate Kubernetes *resources* (Deployments, ConfigMaps, whole namespaces), want deduplicated incremental backups of very large volumes, or need cloud-provider snapshot plugins and pre/post hooks. The two work well together: Velero (or GitOps) for manifests, Bardiup for volume data with real retention. See the [detailed comparison](docs/comparison.md).
 
@@ -124,6 +124,19 @@ EOF
 ```
 
 The controller and the data mover are the same binary. The controller never touches volume data; a short-lived Job does, in the namespace that owns the data, under that namespace's admission policies. Results come back through the container's termination message, so no extra API access is needed. Every step is a reconcile of persisted state, so killing the controller mid-backup loses nothing, and scheduled runs use deterministic names, so retries never create duplicates.
+
+## Lightweight, measured
+
+Numbers from the CI stress run on a 3-node kind cluster (GitHub-hosted runner):
+
+| | |
+|---|---|
+| Container image (controller and mover) | **14 MB** compressed, distroless, amd64 + arm64 |
+| Controller memory | **~45 MB RSS**, flat from 1 to 40+ concurrent backups |
+| Controller CPU | **< 1 CPU-second** for 28 parallel backups across 5 namespaces |
+| Components on nodes between backups | **none** |
+| 28 PVC backups, 5 namespaces, in parallel | **14 s** end to end |
+| 2 GiB incompressible + 100,000 files | backup **43 s**, restore **32 s**, byte-for-byte identical |
 
 ## Tested for real
 

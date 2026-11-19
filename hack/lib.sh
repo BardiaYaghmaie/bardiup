@@ -169,15 +169,16 @@ wait_for() {
   fail "$ns/$obj: $path is '$got', want '$want'"
 }
 
-# wait_all <namespace> <resource> <phase> <count> [timeout]: waits until <count> objects are in <phase>.
+# wait_all <namespace> <resource> <phase> <count> [timeout] [expected-failures]:
+# waits until <count> objects are in <phase>, failing fast on unexpected failures.
 wait_all() {
-  local ns=$1 res=$2 want=$3 count=$4 timeout=${5:-600} n=0
+  local ns=$1 res=$2 want=$3 count=$4 timeout=${5:-600} allowed=${6:-0} n=0 failed phases
   for ((i = 0; i < timeout; i += 3)); do
-    n=$(kubectl -n "$ns" get "$res" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' | grep -cx "$want" || true)
+    phases=$(kubectl -n "$ns" get "$res" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}')
+    n=$(grep -cx "$want" <<<"$phases" || true)
     [[ "$n" -ge "$count" ]] && return 0
-    if kubectl -n "$ns" get "$res" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' | grep -qx Failed; then
-      [[ "$want" != "Failed" ]] && fail "a $res in $ns failed"
-    fi
+    failed=$(grep -cx Failed <<<"$phases" || true)
+    [[ "$want" != "Failed" && "$failed" -gt "$allowed" ]] && fail "$failed $res in $ns failed"
     sleep 3
   done
   fail "$ns: only $n/$count $res reached $want"

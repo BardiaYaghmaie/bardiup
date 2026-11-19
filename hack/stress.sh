@@ -159,13 +159,13 @@ log "4. Object storage outage and recovery"
 kubectl -n s3 scale deploy/rustfs --replicas=0
 kubectl -n s3 wait --for=delete pod -l app=rustfs --timeout=120s
 kubectl -n tenant-1 annotate backupconfig nightly bardiup.io/backup-now=outage --overwrite
-wait_all tenant-1 backups Failed 2 600
+wait_all tenant-1 backups Failed 2 900
 kubectl -n tenant-1 get backups -o custom-columns=NAME:.metadata.name,PHASE:.status.phase,MESSAGE:.status.message | head -5
 wait_for tenant-1 backupconfig/nightly '{.status.conditions[?(@.type=="LastBackupSucceeded")].status}' False 60
 kubectl -n s3 scale deploy/rustfs --replicas=1
 kubectl -n s3 rollout status deploy/rustfs --timeout=180s
 kubectl -n tenant-1 annotate backupconfig nightly bardiup.io/backup-now=recovered --overwrite
-wait_all tenant-1 backups Completed 4 600
+wait_all tenant-1 backups Completed 4 600 2
 wait_for tenant-1 backupconfig/nightly '{.status.conditions[?(@.type=="LastBackupSucceeded")].status}' True 60
 echo "failures were reported and the next run recovered"
 

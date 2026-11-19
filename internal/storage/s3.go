@@ -51,7 +51,8 @@ func New(ctx context.Context, spec v1alpha1.S3Storage, creds Credentials) (*Clie
 	if region == "" {
 		region = "us-east-1"
 	}
-	opts := []func(*config.LoadOptions) error{config.WithRegion(region)}
+	// Ride out short object store outages and restarts instead of failing a long backup.
+	opts := []func(*config.LoadOptions) error{config.WithRegion(region), config.WithRetryMaxAttempts(10)}
 	if creds.AccessKeyID != "" {
 		opts = append(opts, config.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(creds.AccessKeyID, creds.SecretAccessKey, creds.SessionToken)))
