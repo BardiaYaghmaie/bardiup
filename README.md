@@ -3,10 +3,10 @@
 <p align="center"><b>Kubernetes volume backups that keep the right copies, and nothing else.</b></p>
 
 <p align="center">
-  <a href="https://github.com/BardiaYaghmaie/bardiup/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/BardiaYaghmaie/bardiup/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/BardiaYaghmaie/bardiup/releases"><img alt="Release" src="https://img.shields.io/github/v/release/BardiaYaghmaie/bardiup"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue"></a>
-  <a href="https://goreportcard.com/report/github.com/BardiaYaghmaie/bardiup"><img alt="Go Report" src="https://goreportcard.com/badge/github.com/BardiaYaghmaie/bardiup"></a>
+  <a href="https://github.com/BardiaYaghmaie/bardiup/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/BardiaYaghmaie/bardiup/actions/workflows/ci.yml/badge.svg?branch=main&event=push"></a>
+  <a href="https://github.com/BardiaYaghmaie/bardiup/releases"><img alt="Release" src="https://img.shields.io/github/v/release/BardiaYaghmaie/bardiup?color=brightgreen"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-brightgreen"></a>
+  <a href="go.mod"><img alt="Go" src="https://img.shields.io/github/go-mod/go-version/BardiaYaghmaie/bardiup?color=brightgreen"></a>
 </p>
 
 Bardiup is a small Kubernetes operator that backs up PersistentVolumeClaims to any S3-compatible bucket and prunes them with **Grandfather-Father-Son retention**: keep the last 24 hours, 7 days, 4 weeks, 12 months and 5 years, with one line of YAML per tier. Backups are **plain `tar.gz` files** you can restore with `tar` alone. Every namespace manages **its own** backups with the RBAC it already has.
