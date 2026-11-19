@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
 
 permissions:
   contents: read
@@ -67,6 +69,8 @@ jobs:
           KIND_IMAGE: ${{ matrix.image }}
 
   stress:
+    # ~25 minutes: runs on main, weekly and on demand, not on every pull request.
+    if: github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 90
