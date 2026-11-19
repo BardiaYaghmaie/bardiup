@@ -141,7 +141,99 @@ EOF
 wait_for dr restore/from-bucket '{.status.phase}' Completed 300
 verify dr recovered
 
+log "Pod Security: a restricted namespace fails fast as root, works as the data owner"
+new_ns locked
+kubectl label namespace locked pod-security.kubernetes.io/enforce=restricted >/dev/null
+RESTRICTED='{runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}'
+kubectl -n locked apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: data}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: owner}
+spec:
+  restartPolicy: Never
+  securityContext: {fsGroup: 1000}
+  containers:
+    - name: c
+      image: busybox:1.37
+      command: [sh, -c, "echo private > /data/f && chmod 600 /data/f"]
+      securityContext: $RESTRICTED
+      volumeMounts: [{name: d, mountPath: /data}]
+  volumes: [{name: d, persistentVolumeClaim: {claimName: data}}]
+EOF
+wait_for locked pod/owner '{.status.phase}' Succeeded 180
+for b in as-root as-owner; do
+  job=""; [[ $b == as-owner ]] && job="job: {securityContext: $RESTRICTED}"
+  kubectl -n locked apply -f - <<EOF
+apiVersion: bardiup.io/v1alpha1
+kind: Backup
+metadata: {name: $b}
+spec: {pvcName: data, storage: $(s3_storage locked), $job}
+EOF
+done
+wait_for locked backup/as-root '{.status.phase}' Failed 60
+kubectl -n locked get backup as-root -o jsonpath='{.status.message}' | grep -qi restricted || fail "as-root: no Pod Security explanation"
+wait_for locked backup/as-owner '{.status.phase}' Completed 300
+
 if [[ -n "${E2E_SNAPSHOT:-}" ]]; then
+  log "Snapshot of PostgreSQL under write load: restored database recovers and passes amcheck"
+  kubectl -n app apply -f - <<'EOF'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: pg}
+spec: {storageClassName: csi-hostpath-sc, accessModes: [ReadWriteOnce], resources: {requests: {storage: 2Gi}}}
+EOF
+  postgres() { # postgres <name> <pvc>
+    kubectl -n app apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata: {name: $1}
+spec:
+  containers:
+    - name: pg
+      image: postgres:17-alpine
+      env: [{name: POSTGRES_PASSWORD, value: e2e}, {name: PGDATA, value: /var/lib/postgresql/data/pgdata}]
+      readinessProbe: {exec: {command: [pg_isready, -U, postgres]}, periodSeconds: 2}
+      volumeMounts: [{name: d, mountPath: /var/lib/postgresql/data}]
+  volumes: [{name: d, persistentVolumeClaim: {claimName: $2}}]
+EOF
+    kubectl -n app wait --for=condition=Ready "pod/$1" --timeout=300s
+  }
+  postgres pg pg
+  kubectl -n app exec pg -- pgbench -U postgres -i -q -s 5 postgres
+  kubectl -n app exec pg -- pgbench -U postgres -c 4 -T 60 postgres >/dev/null &
+  LOAD=$!
+  sleep 5
+  kubectl -n app apply -f - <<EOF
+apiVersion: bardiup.io/v1alpha1
+kind: Backup
+metadata: {name: pg}
+spec:
+  pvcName: pg
+  method: snapshot
+  snapshot: {volumeSnapshotClassName: csi-hostpath-snapclass}
+  storage: $(s3_storage pg)
+EOF
+  wait_for app backup/pg '{.status.phase}' Completed 300
+  wait "$LOAD"
+  kubectl -n app apply -f - <<'EOF'
+apiVersion: bardiup.io/v1alpha1
+kind: Restore
+metadata: {name: pg}
+spec: {backupName: pg, target: {pvcName: pg-restored, storageClassName: csi-hostpath-sc}}
+EOF
+  wait_for app restore/pg '{.status.phase}' Completed 300
+  postgres pg-restored pg-restored
+  rows=$(kubectl -n app exec pg-restored -- psql -U postgres -tAc 'select count(*) from pgbench_accounts')
+  [[ "$rows" == 500000 ]] || fail "restored database has $rows accounts, want 500000"
+  kubectl -n app exec pg-restored -- pg_amcheck -U postgres --install-missing postgres || fail "pg_amcheck found corruption"
+  kubectl -n app delete pod pg pg-restored --wait=false >/dev/null
+  echo "restored PostgreSQL recovered with all 500000 rows and passed amcheck"
+
   log "Snapshot method"
   kubectl -n app apply -f - <<EOF
 apiVersion: v1

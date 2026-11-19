@@ -2,6 +2,7 @@
 # Shared helpers for e2e.sh and stress.sh.
 #
 # By default a throwaway kind cluster is created with its own kubeconfig.
+# KIND_IMAGE=kindest/node:<version> picks the Kubernetes version.
 # To test an existing cluster instead, set BOTH:
 #   E2E_KUBECONFIG=/path/to/kubeconfig   (never defaults to your own ~/.kube/config)
 #   E2E_IMAGE=registry/bardiup:tag       (an image the cluster can pull)
@@ -37,7 +38,7 @@ setup_cluster() {
     echo "apiVersion: kind.x-k8s.io/v1alpha4"
     echo "nodes: [{role: control-plane}$(for _ in $(seq 1 "$1"); do printf ', {role: worker}'; done)]"
   } >"$WORK/kind.yaml"
-  kind create cluster --name "$CLUSTER" --config "$WORK/kind.yaml" --kubeconfig "$KUBECONFIG" --wait 180s
+  kind create cluster --name "$CLUSTER" --config "$WORK/kind.yaml" --kubeconfig "$KUBECONFIG" --wait 180s ${KIND_IMAGE:+--image "$KIND_IMAGE"}
   log "Building and loading image"
   docker build -q -t bardiup:e2e --build-arg VERSION=e2e "$ROOT"
   docker image inspect bardiup:e2e --format 'image size: {{.Size}} bytes'
