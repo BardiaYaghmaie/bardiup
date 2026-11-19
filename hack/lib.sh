@@ -184,11 +184,37 @@ wait_all() {
   fail "$ns: only $n/$count $res reached $want"
 }
 
-# checksum_pod <namespace> <pvc> <dir>: prints sorted md5sums of files under <dir> in the PVC.
+# on_pvc <namespace> <pvc> <shell command>: runs the command in a pod with the PVC at /data and
+# prints its output. Fails if the command fails.
+on_pvc() {
+  local ns=$1 pvc=$2 name="probe-$RANDOM$RANDOM"
+  kubectl -n "$ns" apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Pod
+metadata: {name: $name}
+spec:
+  restartPolicy: Never
+  containers:
+    - name: c
+      image: busybox:1.37
+      command: [sh, -c, '$3']
+      volumeMounts: [{name: d, mountPath: /data}]
+  volumes: [{name: d, persistentVolumeClaim: {claimName: $pvc}}]
+EOF
+  local phase=""
+  for _ in $(seq 1 150); do
+    phase=$(kubectl -n "$ns" get pod "$name" -o jsonpath='{.status.phase}')
+    [[ "$phase" == Succeeded || "$phase" == Failed ]] && break
+    sleep 2
+  done
+  kubectl -n "$ns" logs "$name"
+  kubectl -n "$ns" delete pod "$name" --wait=false >/dev/null
+  [[ "$phase" == Succeeded ]]
+}
+
+# checksum_pod <namespace> <pvc> <dir>: md5 over the sorted md5sums of files under <dir> in the PVC.
 checksum_pod() {
-  kubectl -n "$1" run "sum-$2-$RANDOM" --rm -i --restart=Never --quiet --image=busybox:1.37 --overrides="{
-    \"spec\":{\"containers\":[{\"name\":\"c\",\"image\":\"busybox:1.37\",\"command\":[\"sh\",\"-c\",\"cd /data/$3 && find . -type f -exec md5sum {} + | sort -k2 | md5sum\"],
-    \"volumeMounts\":[{\"name\":\"d\",\"mountPath\":\"/data\"}]}],\"volumes\":[{\"name\":\"d\",\"persistentVolumeClaim\":{\"claimName\":\"$2\"}}]}}"
+  on_pvc "$1" "$2" "cd /data/$3 && find . -type f -exec md5sum {} + | sort -k2 | md5sum"
 }
 
 footprint() {

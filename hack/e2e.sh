@@ -112,9 +112,7 @@ verify() { # verify <ns> <pvc>
   local got
   got=$(checksum_pod "$1" "$2" app)
   [[ "$got" == "$EXPECTED" ]] || fail "$1/$2: restored data differs"
-  kubectl -n "$1" run "meta-$2" --rm -i --restart=Never --quiet --image=busybox:1.37 --overrides="{
-    \"spec\":{\"containers\":[{\"name\":\"c\",\"image\":\"busybox:1.37\",\"command\":[\"sh\",\"-c\",\"test ! -e /data/cache && test -L /data/app/link && stat -c '%a %u %g' /data/app/nested/hello.txt\"],
-    \"volumeMounts\":[{\"name\":\"d\",\"mountPath\":\"/data\"}]}],\"volumes\":[{\"name\":\"d\",\"persistentVolumeClaim\":{\"claimName\":\"$2\"}}]}}" >"$WORK/meta" 2>&1 ||
+  on_pvc "$1" "$2" "test ! -e /data/cache && test -L /data/app/link && stat -c \"%a %u %g\" /data/app/nested/hello.txt" >"$WORK/meta" 2>&1 ||
     { cat "$WORK/meta"; fail "$1/$2: excludes or symlink not preserved"; }
   grep -q '^600 1000 1000$' "$WORK/meta" || { cat "$WORK/meta"; fail "$1/$2: ownership/mode not preserved"; }
   echo "$1/$2: content, symlink, ownership and permissions match"
@@ -184,9 +182,7 @@ metadata: {name: snap}
 spec: {backupName: snap, target: {pvcName: snap-restored}}
 EOF
   wait_for app restore/snap '{.status.phase}' Completed 300
-  out=$(kubectl -n app run snap-check --rm -i --restart=Never --quiet --image=busybox:1.37 --overrides='{
-    "spec":{"containers":[{"name":"c","image":"busybox:1.37","command":["cat","/data/file"],"volumeMounts":[{"name":"d","mountPath":"/data"}]}],
-    "volumes":[{"name":"d","persistentVolumeClaim":{"claimName":"snap-restored"}}]}}' 2>&1)
+  out=$(on_pvc app snap-restored "cat /data/file" 2>&1)
   grep -q snapshot-data <<<"$out" || fail "snapshot restore content: $out"
   echo "snapshot backup and restore verified"
 fi
