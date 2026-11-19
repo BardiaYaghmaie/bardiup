@@ -1,0 +1,35 @@
+# Hourly crash-consistent backups of a PostgreSQL StatefulSet using CSI snapshots,
+# with a full GFS ladder: 24 hourly, 14 daily, 8 weekly, 12 monthly, 3 yearly.
+# After a year this keeps 52 recovery points instead of 8,760.
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: postgres
+spec:
+  schedule: "0 * * * *"
+  timeZone: Europe/Berlin
+  pvcSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  method: snapshot
+  snapshot:
+    volumeSnapshotClassName: csi-snapclass
+  storage:
+    s3:
+      bucket: prod-backups
+      region: eu-central-1
+      prefix: databases
+      serverSideEncryption: aws:kms
+      kmsKeyID: alias/backups
+      credentialsSecretRef:
+        name: s3-credentials
+  retention:
+    hourly: 24
+    daily: 14
+    weekly: 8
+    monthly: 12
+    yearly: 3
+  job:
+    resources:
+      requests: {cpu: "1", memory: 256Mi}
+      limits: {memory: 1Gi}

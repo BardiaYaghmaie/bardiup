@@ -1,101 +1,86 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "bardiup.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "bardiup.labels" . | nindent 4 }}
+  {{- with .Values.serviceAccount.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "bardiup.fullname" . }}
   namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "bardiup.labels" . | nindent 4 }}
+  labels: {{- include "bardiup.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
-    matchLabels:
-      {{- include "bardiup.selectorLabels" . | nindent 6 }}
+    matchLabels: {{- include "bardiup.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      annotations:
-        {{- with .Values.podAnnotations }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
       labels:
         {{- include "bardiup.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
+      serviceAccountName: {{ include "bardiup.fullname" . }}
       {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "bardiup.serviceAccountName" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
-      - name: {{ .Chart.Name }}
-        securityContext:
-          {{- toYaml .Values.securityContext | nindent 12 }}
-        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
-        args:
-        - --metrics-bind-address=:{{ .Values.controller.metrics.port }}
-        - --health-probe-bind-address=:{{ .Values.controller.healthProbe.port }}
-        {{- if .Values.controller.leaderElection.enabled }}
-        - --leader-elect
-        {{- end }}
-        {{- if .Values.controller.webhook.enabled }}
-        - --webhook-port={{ .Values.controller.webhook.port }}
-        - --webhook-cert-dir={{ .Values.controller.webhook.certDir }}
-        {{- end }}
-        env:
-        - name: BARDIUP_NAMESPACE
-          value: {{ .Release.Namespace }}
-        ports:
-        {{- if .Values.controller.metrics.enabled }}
-        - name: metrics
-          containerPort: {{ .Values.controller.metrics.port }}
-          protocol: TCP
-        {{- end }}
-        {{- if .Values.controller.healthProbe.enabled }}
-        - name: health
-          containerPort: {{ .Values.controller.healthProbe.port }}
-          protocol: TCP
-        {{- end }}
-        {{- if .Values.controller.webhook.enabled }}
-        - name: webhook
-          containerPort: {{ .Values.controller.webhook.port }}
-          protocol: TCP
-        {{- end }}
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: health
-          initialDelaySeconds: 15
-          periodSeconds: 20
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: health
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        resources:
-          {{- toYaml .Values.resources | nindent 12 }}
-        {{- if .Values.controller.webhook.enabled }}
-        volumeMounts:
-        - name: webhook-certs
-          mountPath: {{ .Values.controller.webhook.certDir }}
-          readOnly: true
-        {{- end }}
-      {{- if .Values.controller.webhook.enabled }}
-      volumes:
-      - name: webhook-certs
-        secret:
-          secretName: {{ include "bardiup.fullname" . }}-webhook-certs
-      {{- end }}
+        - name: manager
+          image: {{ include "bardiup.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --leader-elect
+            - --metrics-bind-address={{ if .Values.metrics.enabled }}:{{ .Values.metrics.port }}{{ else }}0{{ end }}
+            - --health-probe-bind-address=:8081
+            - --agent-image={{ include "bardiup.image" . }}
+            - --agent-image-pull-policy={{ .Values.image.pullPolicy }}
+            - --zap-log-level={{ .Values.logLevel }}
+          ports:
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+            {{- end }}
+            - name: health
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources: {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
       {{- end }}

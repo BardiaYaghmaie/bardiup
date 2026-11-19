@@ -4,93 +4,129 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// BackupSpec defines the desired state of Backup
-type BackupSpec struct {
-	// BackupConfig references the BackupConfig that created this backup
-	BackupConfig string `json:"backupConfig"`
+// DeletionPolicy controls what happens to stored data when a Backup object is deleted.
+// +kubebuilder:validation:Enum=Delete;Retain
+type DeletionPolicy string
 
-	// PVCName is the name of the PVC being backed up
+const (
+	DeletionPolicyDelete DeletionPolicy = "Delete"
+	DeletionPolicyRetain DeletionPolicy = "Retain"
+)
+
+// BackupSpec is a single backup of one PVC. BackupConfigs create these; they can also be created by hand.
+type BackupSpec struct {
+	// PVCName is the PVC, in the Backup's namespace, to back up.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="pvcName is immutable"
 	PVCName string `json:"pvcName"`
 
-	// PVCNamespace is the namespace of the PVC being backed up
-	PVCNamespace string `json:"pvcNamespace"`
+	// Storage is the object store receiving the archive.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="storage is immutable"
+	Storage StorageSpec `json:"storage"`
 
-	// StorageLocation is where the backup is stored
-	StorageLocation StorageLocation `json:"storageLocation"`
+	// Method used to read volume data.
+	// +kubebuilder:default=copy
+	// +optional
+	Method BackupMethod `json:"method,omitempty"`
 
-	// RetentionPeriod defines which retention period this backup belongs to
-	RetentionPeriod string `json:"retentionPeriod,omitempty"`
+	// Snapshot options for method snapshot.
+	// +optional
+	Snapshot *SnapshotOptions `json:"snapshot,omitempty"`
 
-	// ExpiresAt defines when this backup should be deleted
-	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+	// Excludes are glob patterns of paths to skip.
+	// +optional
+	Excludes []string `json:"excludes,omitempty"`
 
-	// Labels to help with retention selection
-	Labels map[string]string `json:"labels,omitempty"`
+	// Job customises the data mover Job.
+	// +optional
+	Job JobOptions `json:"job,omitempty"`
+
+	// DeletionPolicy: Delete removes the archive from object storage when this Backup is deleted; Retain keeps it.
+	// +kubebuilder:default=Delete
+	// +optional
+	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
 }
 
-// StorageLocation defines where a backup is stored
-type StorageLocation struct {
-	// Type of storage (s3, azure, gcs)
-	Type string `json:"type"`
+// BackupPhase is the lifecycle phase of a Backup.
+type BackupPhase string
 
-	// Path is the full path to the backup in object storage
-	Path string `json:"path"`
+const (
+	BackupPhasePending      BackupPhase = "Pending"
+	BackupPhaseSnapshotting BackupPhase = "Snapshotting"
+	BackupPhaseRunning      BackupPhase = "Running"
+	BackupPhaseCompleted    BackupPhase = "Completed"
+	BackupPhaseFailed       BackupPhase = "Failed"
+)
 
-	// Bucket name (for S3-compatible storage)
-	Bucket string `json:"bucket,omitempty"`
-
-	// Size of the backup in bytes
-	Size int64 `json:"size,omitempty"`
-}
-
-// BackupStatus defines the observed state of Backup
+// BackupStatus is the observed state of a Backup.
 type BackupStatus struct {
-	// Phase of the backup
-	Phase BackupStatusPhase `json:"phase,omitempty"`
+	// +optional
+	Phase BackupPhase `json:"phase,omitempty"`
 
-	// StartTime when the backup started
-	StartTime *metav1.Time `json:"startTime,omitempty"`
-
-	// CompletionTime when the backup completed
-	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
-
-	// Message provides details about the backup status
+	// +optional
 	Message string `json:"message,omitempty"`
 
-	// VolumeSnapshotName if using snapshot method
-	VolumeSnapshotName string `json:"volumeSnapshotName,omitempty"`
+	// ObjectKey of the archive inside the bucket. A JSON manifest is stored next to it at <objectKey>.json.
+	// +optional
+	ObjectKey string `json:"objectKey,omitempty"`
 
-	// BackupMethod used for this backup
-	BackupMethod BackupMethod `json:"backupMethod,omitempty"`
+	// +optional
+	StartTime *metav1.Time `json:"startTime,omitempty"`
 
-	// Checksum of the backup data
-	Checksum string `json:"checksum,omitempty"`
+	// +optional
+	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 
-	// Conditions represent the latest available observations
+	// SizeBytes is the compressed archive size.
+	// +optional
+	SizeBytes int64 `json:"sizeBytes,omitempty"`
+
+	// Size is SizeBytes in human readable form.
+	// +optional
+	Size string `json:"size,omitempty"`
+
+	// SHA256 of the archive.
+	// +optional
+	SHA256 string `json:"sha256,omitempty"`
+
+	// Files is the number of entries in the archive.
+	// +optional
+	Files int64 `json:"files,omitempty"`
+
+	// Source describes the PVC that was backed up, used as defaults when restoring into a new PVC.
+	// +optional
+	Source *SourceVolume `json:"source,omitempty"`
+
+	// RetainedBy lists the retention rules currently keeping this backup, e.g. [daily, monthly].
+	// Empty for backups that are not subject to a retention policy.
+	// +optional
+	RetainedBy []string `json:"retainedBy,omitempty"`
+
+	// JobName of the data mover Job.
+	// +optional
+	JobName string `json:"jobName,omitempty"`
+
+	// SnapshotName of the VolumeSnapshot (method snapshot).
+	// +optional
+	SnapshotName string `json:"snapshotName,omitempty"`
+
+	// +optional
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// BackupStatusPhase represents the phase of a backup
-type BackupStatusPhase string
-
-const (
-	BackupPhasePending    BackupStatusPhase = "Pending"
-	BackupPhaseInProgress BackupStatusPhase = "InProgress"
-	BackupPhaseCompleted  BackupStatusPhase = "Completed"
-	BackupPhaseFailed     BackupStatusPhase = "Failed"
-	BackupPhaseDeleting   BackupStatusPhase = "Deleting"
-)
-
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:resource:scope=Namespaced,shortName=bk,categories=bardiup
 // +kubebuilder:printcolumn:name="PVC",type=string,JSONPath=`.spec.pvcName`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Size",type=string,JSONPath=`.spec.storageLocation.size`
-// +kubebuilder:printcolumn:name="Expires",type=date,JSONPath=`.spec.expiresAt`
+// +kubebuilder:printcolumn:name="Size",type=string,JSONPath=`.status.size`
+// +kubebuilder:printcolumn:name="Retained By",type=string,JSONPath=`.status.retainedBy`
+// +kubebuilder:printcolumn:name="Completed",type=date,JSONPath=`.status.completionTime`
+// +kubebuilder:printcolumn:name="Message",type=string,JSONPath=`.status.message`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// Backup is the Schema for the backups API
+// Backup is one archive of one PVC in object storage.
 type Backup struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -101,13 +137,9 @@ type Backup struct {
 
 // +kubebuilder:object:root=true
 
-// BackupList contains a list of Backup
+// BackupList contains a list of Backup.
 type BackupList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Backup `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&Backup{}, &BackupList{})
 }

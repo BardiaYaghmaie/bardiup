@@ -1,0 +1,71 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bardiup.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "bardiup.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "bardiup.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+{{- if .Values.metrics.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "bardiup.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "bardiup.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "bardiup.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- end }}
+{{- if .Values.metrics.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "bardiup.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "bardiup.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: bardiup
+      rules:
+        - alert: BardiupBackupStale
+          expr: time() - bardiup_backup_last_success_timestamp_seconds > {{ int .Values.metrics.prometheusRule.staleAfterHours }} * 3600
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No successful backup of PVC {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.pvc {{ "}}" }} for over {{ int .Values.metrics.prometheusRule.staleAfterHours }}h"
+            description: "Check kubectl -n {{ "{{" }} $labels.namespace {{ "}}" }} get backups -l bardiup.io/backup-config={{ "{{" }} $labels.backup_config {{ "}}" }}"
+        - alert: BardiupBackupFailed
+          expr: increase(bardiup_backups_total{result="failed"}[1h]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Backup failed for BackupConfig {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.backup_config {{ "}}" }}"
+        - alert: BardiupBackupConfigNotReady
+          expr: bardiup_backupconfig_ready == 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "BackupConfig {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.backup_config {{ "}}" }} is not ready (invalid spec or storage unreachable)"
+{{- end }}
+{{- end }}

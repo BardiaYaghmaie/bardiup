@@ -1,0 +1,15 @@
+# A one-off backup before a risky change. Retention never touches it, and
+# deletionPolicy: Retain keeps the archive even if this object is deleted.
+apiVersion: bardiup.io/v1alpha1
+kind: Backup
+metadata:
+  name: before-migration
+spec:
+  pvcName: data-postgres-0
+  deletionPolicy: Retain
+  storage:
+    s3:
+      bucket: my-backups
+      prefix: manual
+      credentialsSecretRef:
+        name: s3-credentials

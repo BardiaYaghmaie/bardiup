@@ -1,0 +1,26 @@
+# EKS with IRSA: no static keys. Install the chart with
+#   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/bardiup-controller
+# (the controller needs s3:ListBucket for health checks and s3:DeleteObject for retention),
+# and give the mover a service account with s3:PutObject / s3:GetObject.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-mover
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/bardiup-mover
+---
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: nightly
+spec:
+  schedule: "0 3 * * *"
+  storage:
+    s3:
+      bucket: my-eks-backups
+      region: us-west-2
+  job:
+    serviceAccountName: backup-mover
+  retention:
+    daily: 7
+    weekly: 4

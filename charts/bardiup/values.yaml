@@ -1,137 +1,49 @@
-# Default values for bardiup.
-
-replicaCount: 1
-
 image:
-  repository: bardiup/bardiup
+  repository: ghcr.io/bardiayaghmaie/bardiup
+  # Defaults to the chart appVersion.
+  tag: ""
   pullPolicy: IfNotPresent
-  tag: ""  # Overrides the image tag whose default is the chart appVersion.
 
 imagePullSecrets: []
-nameOverride: ""
-fullnameOverride: ""
 
-serviceAccount:
-  # Specifies whether a service account should be created
-  create: true
-  # Annotations to add to the service account
-  annotations: {}
-  # The name of the service account to use.
-  name: ""
+# Run 2 replicas for faster failover; only the leader reconciles.
+replicaCount: 1
 
-podAnnotations: {}
-
-podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 65532
-  fsGroup: 65532
-
-securityContext:
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop:
-    - ALL
-  readOnlyRootFilesystem: true
-  runAsNonRoot: true
-  runAsUser: 65532
+# Log verbosity: info, debug, or an integer (higher is noisier).
+logLevel: info
 
 resources:
-  limits:
-    cpu: 500m
-    memory: 256Mi
   requests:
-    cpu: 100m
-    memory: 128Mi
+    cpu: 10m
+    memory: 48Mi
+  limits:
+    memory: 256Mi
 
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
 nodeSelector: {}
-
 tolerations: []
-
 affinity: {}
 
-# Controller configuration
-controller:
-  # Leader election ensures only one controller is active
-  leaderElection:
-    enabled: true
-  
-  # Metrics configuration
-  metrics:
-    enabled: true
-    port: 8080
-  
-  # Health probe configuration
-  healthProbe:
-    enabled: true
-    port: 8081
-  
-  # Webhook configuration (for future use)
-  webhook:
+serviceAccount:
+  annotations: {}
+
+# Aggregate Bardiup permissions into the built-in admin, edit and view ClusterRoles so that
+# namespace owners can manage their own BackupConfigs, Backups and Restores.
+aggregateToDefaultRoles: true
+
+metrics:
+  enabled: true
+  port: 8080
+  serviceMonitor:
+    # Requires the Prometheus Operator CRDs.
     enabled: false
-    port: 9443
-    certDir: /tmp/k8s-webhook-server/serving-certs
-
-# Storage configuration examples
-# These are not used directly but serve as documentation
-storageExamples:
-  s3:
-    # Example S3 configuration
-    type: s3
-    bucket: my-backup-bucket
-    region: us-west-2
-    endpoint: ""  # Optional: for S3-compatible storage like MinIO
-    credentialsSecret: s3-credentials
-    prefix: bardiup-backups
-  
-  # Future storage backends
-  azure:
-    type: azure
-    containerName: backups
-    accountName: myaccount
-    credentialsSecret: azure-credentials
-  
-  gcs:
-    type: gcs
-    bucket: my-backup-bucket
-    credentialsSecret: gcs-credentials
-
-# Example backup configurations
-backupExamples:
-  # Example of a daily backup with sophisticated retention
-  dailyBackup:
-    schedule: "0 2 * * *"  # Daily at 2 AM
-    retentionPolicy:
-      daily:
-        keep: 7
-        selectionStrategy: newest
-      weekly:
-        keep: 4
-        selectionStrategy: distributed
-      monthly:
-        keep: 12
-        selectionStrategy: distributed
-      yearly:
-        keep: 5
-        selectionStrategy: distributed
-      custom:
-        - periodDays: 90  # Quarterly
-          keep: 8
-          selectionStrategy: distributed
-  
-  # Example of hourly backup with short retention
-  hourlyBackup:
-    schedule: "0 * * * *"  # Every hour
-    retentionPolicy:
-      daily:
-        keep: 24  # Keep 24 hourly backups (1 day)
-        selectionStrategy: newest
-      weekly:
-        keep: 7
-        selectionStrategy: distributed
-
-# ServiceMonitor for Prometheus integration
-serviceMonitor:
-  enabled: false
-  interval: 30s
-  path: /metrics
-  labels: {}
+    interval: 30s
+    labels: {}
+  prometheusRule:
+    # Requires the Prometheus Operator CRDs.
+    enabled: false
+    labels: {}
+    # Alert when a PVC has had no successful backup for this many hours.
+    staleAfterHours: 26

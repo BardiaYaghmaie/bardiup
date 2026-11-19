@@ -1,0 +1,87 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bardiup
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - secrets
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - list
+- apiGroups:
+  - bardiup.io
+  resources:
+  - backupconfigs
+  - restores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - bardiup.io
+  resources:
+  - backupconfigs/status
+  - backups/finalizers
+  - backups/status
+  - restores/finalizers
+  - restores/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - bardiup.io
+  resources:
+  - backups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - snapshot.storage.k8s.io
+  resources:
+  - volumesnapshots
+  verbs:
+  - create
+  - delete
+  - get

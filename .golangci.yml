@@ -1,0 +1,32 @@
+version: "2"
+linters:
+  enable:
+    - gosec
+    - misspell
+    - unconvert
+    - unparam
+    - prealloc
+    - errorlint
+  settings:
+    gosec:
+      excludes:
+        - G306 # termination message must be world readable for the kubelet
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters: [gosec, prealloc, unparam]
+      - path: zz_generated
+        linters: [all]
+      - path: internal/controller/util.go
+        text: G101 # Secret key names, not credentials
+        linters: [gosec]
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/BardiaYaghmaie/bardiup

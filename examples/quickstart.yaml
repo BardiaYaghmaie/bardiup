@@ -1,0 +1,25 @@
+# Nightly backups of every PVC labelled backup=enabled in this namespace,
+# keeping 7 daily, 4 weekly and 6 monthly recovery points.
+#
+#   kubectl -n my-app create secret generic s3-credentials \
+#     --from-literal=AWS_ACCESS_KEY_ID=... --from-literal=AWS_SECRET_ACCESS_KEY=...
+#   kubectl -n my-app apply -f quickstart.yaml
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: nightly
+spec:
+  schedule: "0 2 * * *"
+  pvcSelector:
+    matchLabels:
+      backup: enabled
+  storage:
+    s3:
+      bucket: my-backups
+      region: eu-central-1
+      credentialsSecretRef:
+        name: s3-credentials
+  retention:
+    daily: 7
+    weekly: 4
+    monthly: 6

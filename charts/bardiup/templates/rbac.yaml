@@ -1,165 +1,77 @@
-{{- if .Values.serviceAccount.create }}
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: {{ include "bardiup.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "bardiup.labels" . | nindent 4 }}
-  {{- with .Values.serviceAccount.annotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
----
+{{- $role := .Files.Get "files/role.yaml" | fromYaml }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: {{ include "bardiup.fullname" . }}
-  labels:
-    {{- include "bardiup.labels" . | nindent 4 }}
-rules:
-# BackupConfig and Backup resources
-- apiGroups:
-  - bardiup.io
-  resources:
-  - backupconfigs
-  - backups
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - bardiup.io
-  resources:
-  - backupconfigs/status
-  - backups/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - bardiup.io
-  resources:
-  - backupconfigs/finalizers
-  - backups/finalizers
-  verbs:
-  - update
-
-# Core resources
-- apiGroups:
-  - ""
-  resources:
-  - persistentvolumeclaims
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - persistentvolumes
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - pods/log
-  verbs:
-  - get
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  verbs:
-  - get
-  - list
-  - watch
-
-# Batch resources for backup jobs
-- apiGroups:
-  - batch
-  resources:
-  - jobs
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-
-# Snapshot resources (for future use)
-- apiGroups:
-  - snapshot.storage.k8s.io
-  resources:
-  - volumesnapshots
-  - volumesnapshotcontents
-  - volumesnapshotclasses
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-
-# Events
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
-
-# Leader election
-- apiGroups:
-  - coordination.k8s.io
-  resources:
-  - leases
-  verbs:
-  - create
-  - get
-  - list
-  - update
+  labels: {{- include "bardiup.labels" . | nindent 4 }}
+rules: {{- toYaml $role.rules | nindent 2 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: {{ include "bardiup.fullname" . }}
-  labels:
-    {{- include "bardiup.labels" . | nindent 4 }}
+  labels: {{- include "bardiup.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ include "bardiup.fullname" . }}
 subjects:
-- kind: ServiceAccount
-  name: {{ include "bardiup.serviceAccountName" . }}
+  - kind: ServiceAccount
+    name: {{ include "bardiup.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "bardiup.fullname" . }}-leader-election
   namespace: {{ .Release.Namespace }}
+  labels: {{- include "bardiup.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "bardiup.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "bardiup.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "bardiup.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "bardiup.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.aggregateToDefaultRoles }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "bardiup.fullname" . }}-edit
+  labels:
+    {{- include "bardiup.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: ["bardiup.io"]
+    resources: ["backupconfigs", "backups", "restores"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "bardiup.fullname" . }}-view
+  labels:
+    {{- include "bardiup.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: ["bardiup.io"]
+    resources: ["backupconfigs", "backups", "restores"]
+    verbs: ["get", "list", "watch"]
 {{- end }}

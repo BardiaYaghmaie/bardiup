@@ -1,0 +1,734 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: backupconfigs.bardiup.io
+spec:
+  group: bardiup.io
+  names:
+    categories:
+    - bardiup
+    kind: BackupConfig
+    listKind: BackupConfigList
+    plural: backupconfigs
+    shortNames:
+    - bcfg
+    singular: backupconfig
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.schedule
+      name: Schedule
+      type: string
+    - jsonPath: .spec.suspend
+      name: Suspend
+      type: boolean
+    - jsonPath: .status.selectedPVCs
+      name: PVCs
+      type: integer
+    - jsonPath: .status.completedBackups
+      name: Backups
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.lastSuccessfulTime
+      name: Last Success
+      type: date
+    - jsonPath: .status.nextScheduleTime
+      name: Next
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: BackupConfig schedules backups of PVCs in its namespace and enforces
+          a retention policy.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: BackupConfigSpec defines which PVCs to back up, when, where
+              to, and how long to keep the results.
+            properties:
+              excludes:
+                description: |-
+                  Excludes are glob patterns (path.Match syntax) of paths, relative to the volume root, to skip.
+                  A pattern matching a directory skips its whole subtree. Example: ["lost+found", "cache/*", "*.tmp"].
+                items:
+                  type: string
+                type: array
+              failedBackupsHistoryLimit:
+                default: 3
+                description: FailedBackupsHistoryLimit is how many failed backups
+                  per PVC are kept for inspection.
+                format: int32
+                minimum: 0
+                type: integer
+              job:
+                description: Job customises the data mover Jobs.
+                properties:
+                  activeDeadlineSeconds:
+                    default: 21600
+                    description: ActiveDeadlineSeconds bounds how long a single backup
+                      or restore may run.
+                    format: int64
+                    minimum: 60
+                    type: integer
+                  backoffLimit:
+                    default: 2
+                    description: BackoffLimit is the number of retries before the
+                      Job is marked failed.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: NodeSelector for the mover pod. Ignored when the
+                      pod must run next to a workload holding a ReadWriteOnce volume.
+                    type: object
+                  resources:
+                    description: Resources for the data mover container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  securityContext:
+                    description: |-
+                      SecurityContext replaces the default container security context.
+                      By default the mover runs as root with only DAC_OVERRIDE (backup) or
+                      CHOWN/DAC_OVERRIDE/FOWNER/FSETID (restore), which satisfies the "baseline" Pod Security Standard.
+                    properties:
+                      allowPrivilegeEscalation:
+                        description: |-
+                          AllowPrivilegeEscalation controls whether a process can gain more
+                          privileges than its parent process. This bool directly controls if
+                          the no_new_privs flag will be set on the container process.
+                          AllowPrivilegeEscalation is true always when the container is:
+                          1) run as Privileged
+                          2) has CAP_SYS_ADMIN
+                          Note that this field cannot be set when spec.os.name is windows.
+                        type: boolean
+                      appArmorProfile:
+                        description: |-
+                          appArmorProfile is the AppArmor options to use by this container. If set, this profile
+                          overrides the pod's appArmorProfile.
+                          Note that this field cannot be set when spec.os.name is windows.
+                        properties:
+                          localhostProfile:
+                            description: |-
+                              localhostProfile indicates a profile loaded on the node that should be used.
+                              The profile must be preconfigured on the node to work.
+                              Must match the loaded name of the profile.
+                              Must be set if and only if type is "Localhost".
+                            type: string
+                          type:
+                            description: |-
+                              type indicates which kind of AppArmor profile will be applied.
+                              Valid options are:
+                                Localhost - a profile pre-loaded on the node.
+                                RuntimeDefault - the container runtime's default profile.
+                                Unconfined - no AppArmor enforcement.
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      capabilities:
+                        description: |-
+                          The capabilities to add/drop when running containers.
+                          Defaults to the default set of capabilities granted by the container runtime.
+                          Note that this field cannot be set when spec.os.name is windows.
+                        properties:
+                          add:
+                            description: Added capabilities
+                            items:
+                              description: Capability represent POSIX capabilities
+                                type
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          drop:
+                            description: Removed capabilities
+                            items:
+                              description: Capability represent POSIX capabilities
+                                type
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                      privileged:
+                        description: |-
+                          Run container in privileged mode.
+                          Processes in privileged containers are essentially equivalent to root on the host.
+                          Defaults to false.
+                          Note that this field cannot be set when spec.os.name is windows.
+                        type: boolean
+                      procMount:
+                        description: |-
+                          procMount denotes the type of proc mount to use for the containers.
+                          The default value is Default which uses the container runtime defaults for
+                          readonly paths and masked paths.
+                          Note that this field cannot be set when spec.os.name is windows.
+                        type: string
+                      readOnlyRootFilesystem:
+                        description: |-
+                          Whether this container has a read-only root filesystem.
+                          Default is false.
+                          Note that this field cannot be set when spec.os.name is windows.
+                        type: boolean
+                      runAsGroup:
+                        description: |-
+                          The GID to run the entrypoint of the container process.
+                          Uses runtime default if unset.
+                          May also be set in PodSecurityContext.  If set in both SecurityContext and
+                          PodSecurityContext, the value specified in SecurityContext takes precedence.
+                          Note that this field cannot be set when spec.os.name is windows.
+                        format: int64
+                        type: integer
+                      runAsNonRoot:
+                        description: |-
+                          Indicates that the container must run as a non-root user.
+                          If true, the Kubelet will validate the image at runtime to ensure that it
+                          does not run as UID 0 (root) and fail to start the container if it does.
+                          If unset or false, no such validation will be performed.
+                          May also be set in PodSecurityContext.  If set in both SecurityContext and
+                          PodSecurityContext, the value specified in SecurityContext takes precedence.
+                        type: boolean
+                      runAsUser:
+                        description: |-
+                          The UID to run the entrypoint of the container process.
+                          Defaults to user specified in image metadata if unspecified.
+                          May also be set in PodSecurityContext.  If set in both SecurityContext and
+                          PodSecurityContext, the value specified in SecurityContext takes precedence.
+                          Note that this field cannot be set when spec.os.name is windows.
+                        format: int64
+                        type: integer
+                      seLinuxOptions:
+                        description: |-
+                          The SELinux context to be applied to the container.
+                          If unspecified, the container runtime will allocate a random SELinux context for each
+                          container.  May also be set in PodSecurityContext.  If set in both SecurityContext and
+                          PodSecurityContext, the value specified in SecurityContext takes precedence.
+                          Note that this field cannot be set when spec.os.name is windows.
+                        properties:
+                          level:
+                            description: Level is SELinux level label that applies
+                              to the container.
+                            type: string
+                          role:
+                            description: Role is a SELinux role label that applies
+                              to the container.
+                            type: string
+                          type:
+                            description: Type is a SELinux type label that applies
+                              to the container.
+                            type: string
+                          user:
+                            description: User is a SELinux user label that applies
+                              to the container.
+                            type: string
+                        type: object
+                      seccompProfile:
+                        description: |-
+                          The seccomp options to use by this container. If seccomp options are
+                          provided at both the pod & container level, the container options
+                          override the pod options.
+                          Note that this field cannot be set when spec.os.name is windows.
+                        properties:
+                          localhostProfile:
+                            description: |-
+                              localhostProfile indicates a profile defined in a file on the node should be used.
+                              The profile must be preconfigured on the node to work.
+                              Must be a descending path, relative to the kubelet's configured seccomp profile location.
+                              Must be set if type is "Localhost". Must NOT be set for any other type.
+                            type: string
+                          type:
+                            description: |-
+                              type indicates which kind of seccomp profile will be applied.
+                              Valid options are:
+
+                              Localhost - a profile defined in a file on the node should be used.
+                              RuntimeDefault - the container runtime default profile should be used.
+                              Unconfined - no profile should be applied.
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      windowsOptions:
+                        description: |-
+                          The Windows specific settings applied to all containers.
+                          If unspecified, the options from the PodSecurityContext will be used.
+                          If set in both SecurityContext and PodSecurityContext, the value specified in SecurityContext takes precedence.
+                          Note that this field cannot be set when spec.os.name is linux.
+                        properties:
+                          gmsaCredentialSpec:
+                            description: |-
+                              GMSACredentialSpec is where the GMSA admission webhook
+                              (https://github.com/kubernetes-sigs/windows-gmsa) inlines the contents of the
+                              GMSA credential spec named by the GMSACredentialSpecName field.
+                            type: string
+                          gmsaCredentialSpecName:
+                            description: GMSACredentialSpecName is the name of the
+                              GMSA credential spec to use.
+                            type: string
+                          hostProcess:
+                            description: |-
+                              HostProcess determines if a container should be run as a 'Host Process' container.
+                              All of a Pod's containers must have the same effective HostProcess value
+                              (it is not allowed to have a mix of HostProcess containers and non-HostProcess containers).
+                              In addition, if HostProcess is true then HostNetwork must also be set to true.
+                            type: boolean
+                          runAsUserName:
+                            description: |-
+                              The UserName in Windows to run the entrypoint of the container process.
+                              Defaults to the user specified in image metadata if unspecified.
+                              May also be set in PodSecurityContext. If set in both SecurityContext and
+                              PodSecurityContext, the value specified in SecurityContext takes precedence.
+                            type: string
+                        type: object
+                    type: object
+                  serviceAccountName:
+                    description: ServiceAccountName for the mover pod, e.g. one bound
+                      to an IAM role via IRSA.
+                    type: string
+                  tolerations:
+                    description: Tolerations added to the mover pod.
+                    items:
+                      description: |-
+                        The pod this Toleration is attached to tolerates any taint that matches
+                        the triple <key,value,effect> using the matching operator <operator>.
+                      properties:
+                        effect:
+                          description: |-
+                            Effect indicates the taint effect to match. Empty means match all taint effects.
+                            When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute.
+                          type: string
+                        key:
+                          description: |-
+                            Key is the taint key that the toleration applies to. Empty means match all taint keys.
+                            If the key is empty, operator must be Exists; this combination means to match all values and all keys.
+                          type: string
+                        operator:
+                          description: |-
+                            Operator represents a key's relationship to the value.
+                            Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
+                            Exists is equivalent to wildcard for value, so that a pod can
+                            tolerate all taints of a particular category.
+                            Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
+                          type: string
+                        tolerationSeconds:
+                          description: |-
+                            TolerationSeconds represents the period of time the toleration (which must be
+                            of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default,
+                            it is not set, which means tolerate the taint forever (do not evict). Zero and
+                            negative values will be treated as 0 (evict immediately) by the system.
+                          format: int64
+                          type: integer
+                        value:
+                          description: |-
+                            Value is the taint value the toleration matches to.
+                            If the operator is Exists, the value should be empty, otherwise just a regular string.
+                          type: string
+                      type: object
+                    type: array
+                type: object
+              method:
+                default: copy
+                description: Method used to read volume data.
+                enum:
+                - copy
+                - snapshot
+                type: string
+              pvcSelector:
+                description: PVCSelector selects PVCs in the BackupConfig's namespace.
+                  An empty selector matches every PVC.
+                properties:
+                  matchExpressions:
+                    description: MatchExpressions are label selector requirements.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: MatchLabels selects PVCs having all these labels.
+                    type: object
+                  names:
+                    description: Names restricts the selection to these PVC names.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              retention:
+                description: Retention decides which completed backups are kept. Without
+                  any rule every backup is kept.
+                properties:
+                  custom:
+                    description: Custom rules use fixed-length periods, e.g. every
+                      90d (quarterly) or every 6h.
+                    items:
+                      description: CustomRetention keeps the newest backup in each
+                        of the last Keep periods of length Every.
+                      properties:
+                        every:
+                          description: 'Every is the period length: an integer followed
+                            by h (hours), d (days) or w (weeks). Example: 90d.'
+                          pattern: ^[1-9][0-9]*[hdw]$
+                          type: string
+                        keep:
+                          description: Keep is the number of periods to keep a backup
+                            for.
+                          format: int32
+                          minimum: 1
+                          type: integer
+                      required:
+                      - every
+                      - keep
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - every
+                    x-kubernetes-list-type: map
+                  daily:
+                    description: Daily keeps the newest backup of each of the last
+                      N days.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  hourly:
+                    description: Hourly keeps the newest backup of each of the last
+                      N hours.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  keepLast:
+                    description: KeepLast always keeps the N most recent backups.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  monthly:
+                    description: Monthly keeps the newest backup of each of the last
+                      N months.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  weekly:
+                    description: Weekly keeps the newest backup of each of the last
+                      N ISO weeks.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  yearly:
+                    description: Yearly keeps the newest backup of each of the last
+                      N years.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
+              schedule:
+                description: Schedule in standard 5-field cron format, or a descriptor
+                  such as @daily or @every 6h.
+                minLength: 1
+                type: string
+              snapshot:
+                description: Snapshot options for method snapshot.
+                properties:
+                  volumeSnapshotClassName:
+                    description: VolumeSnapshotClassName to use. Defaults to the cluster
+                      default VolumeSnapshotClass.
+                    type: string
+                type: object
+              storage:
+                description: Storage is the object store receiving backup archives.
+                properties:
+                  s3:
+                    description: S3 configures an S3 or S3-compatible bucket (AWS,
+                      MinIO, Ceph RGW, Cloudflare R2, Backblaze B2, Wasabi, ...).
+                    properties:
+                      bucket:
+                        description: Bucket name. It must already exist.
+                        minLength: 3
+                        type: string
+                      credentialsSecretRef:
+                        description: |-
+                          CredentialsSecretRef names a Secret in the same namespace holding AWS_ACCESS_KEY_ID,
+                          AWS_SECRET_ACCESS_KEY and optionally AWS_SESSION_TOKEN.
+                          When omitted, the default AWS credential chain is used (IRSA, EKS Pod Identity, instance profile).
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      endpoint:
+                        description: |-
+                          Endpoint URL for S3-compatible storage, e.g. https://minio.example.com:9000.
+                          Leave empty for AWS S3.
+                        type: string
+                      forcePathStyle:
+                        description: ForcePathStyle uses path-style addressing (bucket
+                          in the path). Required by most self-hosted stores like MinIO.
+                        type: boolean
+                      insecureSkipTLSVerify:
+                        description: InsecureSkipTLSVerify disables TLS certificate
+                          verification. Only for testing.
+                        type: boolean
+                      kmsKeyID:
+                        description: KMSKeyID is the KMS key used when serverSideEncryption
+                          is aws:kms.
+                        type: string
+                      prefix:
+                        description: |-
+                          Prefix prepended to every object key. Objects are stored as
+                          <prefix>/<namespace>/<pvc>/<backup>.tar.gz plus a .json manifest.
+                        type: string
+                      region:
+                        default: us-east-1
+                        description: Region of the bucket. Most S3-compatible stores
+                          accept any value.
+                        type: string
+                      serverSideEncryption:
+                        description: ServerSideEncryption requests server-side encryption
+                          of stored objects.
+                        enum:
+                        - AES256
+                        - aws:kms
+                        type: string
+                    required:
+                    - bucket
+                    type: object
+                required:
+                - s3
+                type: object
+              suspend:
+                description: Suspend stops new scheduled backups. Retention keeps
+                  running.
+                type: boolean
+              timeZone:
+                description: |-
+                  TimeZone (IANA name, e.g. Europe/Berlin) used for the schedule and for calendar-based retention.
+                  Defaults to UTC.
+                type: string
+            required:
+            - schedule
+            - storage
+            type: object
+          status:
+            description: BackupConfigStatus is the observed state of a BackupConfig.
+            properties:
+              activeBackups:
+                description: ActiveBackups is the number of backups pending or running.
+                format: int32
+                type: integer
+              completedBackups:
+                description: CompletedBackups is the number of retained completed
+                  backups.
+                format: int32
+                type: integer
+              conditions:
+                description: 'Conditions: Ready (spec valid and storage reachable)
+                  and LastBackupSucceeded.'
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              failedBackups:
+                description: FailedBackups is the number of retained failed backups.
+                format: int32
+                type: integer
+              lastBackupNowTrigger:
+                description: LastBackupNowTrigger is the last processed value of the
+                  bardiup.io/backup-now annotation.
+                type: string
+              lastScheduleTime:
+                description: LastScheduleTime is when backups were last started by
+                  this config.
+                format: date-time
+                type: string
+              lastSuccessfulTime:
+                description: LastSuccessfulTime is the completion time of the newest
+                  successful backup.
+                format: date-time
+                type: string
+              nextScheduleTime:
+                description: NextScheduleTime is when the next scheduled run is due.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the last spec generation processed.
+                format: int64
+                type: integer
+              selectedPVCs:
+                description: SelectedPVCs is the number of PVCs matched by the selector
+                  at the last reconcile.
+                format: int32
+                type: integer
+            type: object
+        type: object
+        x-kubernetes-validations:
+        - message: name must be at most 63 characters (it is used as a label value)
+          rule: size(self.metadata.name) <= 63
+    served: true
+    storage: true
+    subresources:
+      status: {}
