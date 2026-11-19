@@ -1,0 +1,10 @@
+# Restore a backup into a new PVC next to the original.
+# Find backups with: kubectl get backups -l bardiup.io/pvc=<pvc-name>
+apiVersion: bardiup.io/v1alpha1
+kind: Restore
+metadata:
+  name: rollback
+spec:
+  backupName: nightly-data-postgres-0-20261119-020000
+  target:
+    pvcName: data-postgres-0-restored

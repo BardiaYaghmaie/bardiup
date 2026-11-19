@@ -32,7 +32,7 @@ Reading every file of an arbitrary volume needs to bypass file permissions. By d
 - backup: `DAC_OVERRIDE` (read any file). The volume is mounted **read-only**.
 - restore: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID` (write files and restore ownership and modes).
 
-All other capabilities are dropped, privilege escalation is disabled, the root filesystem is read-only, and no service account token is mounted unless you set `job.serviceAccountName`. This fits the **baseline** Pod Security Standard. Unlike file-level backup tools that run a privileged DaemonSet with `hostPath` access to every pod volume on the node, Bardiup only mounts the one volume it's working on, through the normal CSI path.
+All other capabilities are dropped, privilege escalation is disabled, the root filesystem is read-only, and no service account token is mounted unless you set `job.serviceAccountName`. This fits the **baseline** Pod Security Standard. File-level backup tools usually run a DaemonSet with `hostPath` access to every pod volume on the node. Bardiup instead mounts only the one volume it's working on, through the normal CSI path, and only while the backup runs.
 
 ### Namespaces enforcing `restricted`
 

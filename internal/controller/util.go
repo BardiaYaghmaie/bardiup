@@ -76,6 +76,24 @@ func boundedName(name string, maxLen int) string {
 // labelValue makes s a valid label value (max 63 chars).
 func labelValue(s string) string { return boundedName(s, 63) }
 
+// patchStatus writes obj's status with optimistic locking, so a reconcile working from a stale
+// cache can never overwrite newer state. It reports whether the write happened; on a conflict the
+// newer object's watch event triggers another reconcile.
+func patchStatus(ctx context.Context, c client.Client, obj, orig client.Object) (bool, error) {
+	err := c.Status().Patch(ctx, obj, client.MergeFromWithOptions(orig, client.MergeFromWithOptimisticLock{}))
+	if apierrors.IsConflict(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func ignoreConflict(err error) error {
+	if apierrors.IsConflict(err) {
+		return nil
+	}
+	return err
+}
+
 // HumanBytes formats n using binary units.
 func HumanBytes(n int64) string {
 	const unit = 1024

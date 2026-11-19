@@ -1,0 +1,19 @@
+# Restore straight from the bucket into a fresh cluster or another namespace.
+# No Backup object is needed; the archive's manifest checksum is verified.
+apiVersion: bardiup.io/v1alpha1
+kind: Restore
+metadata:
+  name: dr-postgres
+spec:
+  source:
+    objectKey: prod/shop/data-postgres-0/nightly-data-postgres-0-20261119-020000.tar.gz
+    storage:
+      s3:
+        bucket: prod-backups
+        region: eu-central-1
+        credentialsSecretRef:
+          name: s3-credentials
+  target:
+    pvcName: data-postgres-0
+    size: 20Gi
+    storageClassName: gp3

@@ -118,6 +118,8 @@ func runManager() error {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         leaderElect,
 		LeaderElectionID:       "bardiup.bardiup.io",
+		// The process exits right after the manager stops, so handing the lease over early is safe.
+		LeaderElectionReleaseOnCancel: true,
 		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
 			// Only cache the Jobs Bardiup creates.
 			&batchv1.Job{}: {Label: labels.SelectorFromSet(labels.Set{v1alpha1.LabelManagedBy: v1alpha1.ManagedByValue})},

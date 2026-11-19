@@ -887,3 +887,41 @@ func TestBackupSnapshotError(t *testing.T) {
 		t.Fatalf("status %+v", b.Status)
 	}
 }
+
+// staleClient serves one outdated Backup from Get, like an informer cache that hasn't caught up.
+type staleClient struct {
+	client.Client
+	stale *v1alpha1.Backup
+}
+
+func (s *staleClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if b, ok := obj.(*v1alpha1.Backup); ok && s.stale != nil && key.Name == s.stale.Name {
+		s.stale.DeepCopyInto(b)
+		s.stale = nil
+		return nil
+	}
+	return s.Client.Get(ctx, key, obj, opts...)
+}
+
+// Regression: a reconcile reading a stale "Running" Backup after completion (the Job is already
+// deleted) must not overwrite the persisted Completed status.
+func TestBackupStaleCacheCannotClobberCompletion(t *testing.T) {
+	e := newEnv(t, newBackup(), pvc("data"), secret())
+	e.run(t, e.bkR, "bk1")
+	e.run(t, e.bkR, "bk1")
+	stale := e.backup(t)
+	if stale.Status.Phase != v1alpha1.BackupPhaseRunning {
+		t.Fatalf("setup: %s", stale.Status.Phase)
+	}
+	e.finishJob(t, "backup-bk1", true, agent.Result{SHA256: "abc"})
+	e.run(t, e.bkR, "bk1")
+	if e.backup(t).Status.Phase != v1alpha1.BackupPhaseCompleted {
+		t.Fatal("setup: not completed")
+	}
+
+	e.bkR.Client = &staleClient{Client: e.c, stale: stale}
+	e.run(t, e.bkR, "bk1")
+	if b := e.backup(t); b.Status.Phase != v1alpha1.BackupPhaseCompleted {
+		t.Fatalf("stale reconcile overwrote status: %s %q", b.Status.Phase, b.Status.Message)
+	}
+}

@@ -55,19 +55,37 @@ func (r *RestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		res, err = r.start(ctx, rs)
 	}
 	if !equality.Semantic.DeepEqual(orig.Status, rs.Status) {
-		if perr := r.Status().Patch(ctx, rs, client.MergeFrom(orig)); perr != nil {
+		written, perr := patchStatus(ctx, r.Client, rs, orig)
+		if perr != nil || !written {
 			return ctrl.Result{}, perr
+		}
+		if orig.Status.Phase != rs.Status.Phase {
+			r.transitioned(ctx, rs)
 		}
 	}
 	return res, err
 }
 
-func (r *RestoreReconciler) fail(rs *v1alpha1.Restore, reason, msg string) {
+// transitioned runs the side effects of entering a terminal phase, only after that phase is persisted.
+func (r *RestoreReconciler) transitioned(ctx context.Context, rs *v1alpha1.Restore) {
+	switch rs.Status.Phase {
+	case v1alpha1.RestorePhaseCompleted:
+		restoresTotal.WithLabelValues(rs.Namespace, "completed").Inc()
+		r.Recorder.Eventf(rs, nil, corev1.EventTypeNormal, "Completed", "Restore", "Restored %d files into PVC %s", rs.Status.Files, rs.Spec.Target.PVCName)
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: rs.Status.JobName, Namespace: rs.Namespace}}
+		if err := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
+			log.FromContext(ctx).Error(err, "delete finished job")
+		}
+	case v1alpha1.RestorePhaseFailed:
+		restoresTotal.WithLabelValues(rs.Namespace, "failed").Inc()
+		r.Recorder.Eventf(rs, nil, corev1.EventTypeWarning, "Failed", "Restore", "%s", rs.Status.Message)
+	}
+}
+
+func (r *RestoreReconciler) fail(rs *v1alpha1.Restore, msg string) {
 	rs.Status.Phase = v1alpha1.RestorePhaseFailed
 	rs.Status.Message = truncate(msg, 1024)
 	rs.Status.CompletionTime = &metav1.Time{Time: r.Now()}
-	r.Recorder.Eventf(rs, nil, corev1.EventTypeWarning, reason, "Restore", "%s", rs.Status.Message)
-	restoresTotal.WithLabelValues(rs.Namespace, "failed").Inc()
 }
 
 func (r *RestoreReconciler) start(ctx context.Context, rs *v1alpha1.Restore) (ctrl.Result, error) {
@@ -82,7 +100,7 @@ func (r *RestoreReconciler) start(ctx context.Context, rs *v1alpha1.Restore) (ct
 		b := &v1alpha1.Backup{}
 		if err := r.Get(ctx, client.ObjectKey{Namespace: rs.Namespace, Name: rs.Spec.BackupName}, b); err != nil {
 			if apierrors.IsNotFound(err) {
-				r.fail(rs, "BackupNotFound", fmt.Sprintf("backup %q not found", rs.Spec.BackupName))
+				r.fail(rs, fmt.Sprintf("backup %q not found", rs.Spec.BackupName))
 				return ctrl.Result{}, nil
 			}
 			return ctrl.Result{}, err
@@ -90,7 +108,7 @@ func (r *RestoreReconciler) start(ctx context.Context, rs *v1alpha1.Restore) (ct
 		switch b.Status.Phase {
 		case v1alpha1.BackupPhaseCompleted:
 		case v1alpha1.BackupPhaseFailed:
-			r.fail(rs, "BackupFailed", fmt.Sprintf("backup %q failed and cannot be restored", b.Name))
+			r.fail(rs, fmt.Sprintf("backup %q failed and cannot be restored", b.Name))
 			return ctrl.Result{}, nil
 		default:
 			rs.Status.Phase = v1alpha1.RestorePhasePending
@@ -103,11 +121,11 @@ func (r *RestoreReconciler) start(ctx context.Context, rs *v1alpha1.Restore) (ct
 	}
 
 	if _, err := loadCredentials(ctx, r.APIReader, rs.Namespace, s3.CredentialsSecretRef); err != nil {
-		r.fail(rs, "InvalidCredentials", err.Error())
+		r.fail(rs, err.Error())
 		return ctrl.Result{}, nil
 	}
 	if err := checkPodSecurity(ctx, r.APIReader, rs.Namespace, rs.Spec.Job); err != nil {
-		r.fail(rs, "PodSecurity", err.Error())
+		r.fail(rs, err.Error())
 		return ctrl.Result{}, nil
 	}
 
@@ -123,7 +141,7 @@ func (r *RestoreReconciler) start(ctx context.Context, rs *v1alpha1.Restore) (ct
 	node, err := placement(ctx, r.APIReader, pvc)
 	if err != nil {
 		if errors.Is(err, errRWOPInUse) {
-			r.fail(rs, "VolumeInUse", err.Error())
+			r.fail(rs, err.Error())
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -163,7 +181,7 @@ func (r *RestoreReconciler) ensureTarget(ctx context.Context, rs *v1alpha1.Resto
 	err := r.Get(ctx, client.ObjectKey{Namespace: rs.Namespace, Name: t.PVCName}, pvc)
 	if err == nil {
 		if pvc.Spec.VolumeMode != nil && *pvc.Spec.VolumeMode == corev1.PersistentVolumeBlock {
-			r.fail(rs, "Unsupported", "target PVC is a block-mode volume")
+			r.fail(rs, "target PVC is a block-mode volume")
 			return nil, false, nil
 		}
 		return pvc, false, nil
@@ -182,12 +200,12 @@ func (r *RestoreReconciler) ensureTarget(ctx context.Context, rs *v1alpha1.Resto
 	case source.Capacity != "":
 		q, err := resource.ParseQuantity(source.Capacity)
 		if err != nil {
-			r.fail(rs, "InvalidSize", fmt.Sprintf("recorded capacity %q is invalid: %v", source.Capacity, err))
+			r.fail(rs, fmt.Sprintf("recorded capacity %q is invalid: %v", source.Capacity, err))
 			return nil, false, nil
 		}
 		size = q
 	default:
-		r.fail(rs, "SizeRequired", fmt.Sprintf("PVC %q does not exist; set spec.target.size so it can be created", t.PVCName))
+		r.fail(rs, fmt.Sprintf("PVC %q does not exist; set spec.target.size so it can be created", t.PVCName))
 		return nil, false, nil
 	}
 	modes := t.AccessModes
@@ -224,7 +242,7 @@ func (r *RestoreReconciler) watchJob(ctx context.Context, rs *v1alpha1.Restore) 
 	job := &batchv1.Job{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: rs.Namespace, Name: rs.Status.JobName}, job); err != nil {
 		if apierrors.IsNotFound(err) {
-			r.fail(rs, "JobLost", fmt.Sprintf("job %s was deleted before finishing", rs.Status.JobName))
+			r.fail(rs, fmt.Sprintf("job %s was deleted before finishing", rs.Status.JobName))
 			return nil
 		}
 		return err
@@ -234,7 +252,7 @@ func (r *RestoreReconciler) watchJob(ctx context.Context, rs *v1alpha1.Restore) 
 		return nil
 	}
 	if res == nil {
-		r.fail(rs, "JobFailed", failure)
+		r.fail(rs, failure)
 		return nil
 	}
 	now := metav1.NewTime(r.Now())
@@ -244,11 +262,6 @@ func (r *RestoreReconciler) watchJob(ctx context.Context, rs *v1alpha1.Restore) 
 	rs.Status.Message = "restore completed, checksum verified"
 	if len(res.Warnings) > 0 {
 		rs.Status.Message += fmt.Sprintf("; %d warning(s), first: %s", len(res.Warnings), res.Warnings[0])
-	}
-	restoresTotal.WithLabelValues(rs.Namespace, "completed").Inc()
-	r.Recorder.Eventf(rs, nil, corev1.EventTypeNormal, "Completed", "Restore", "Restored %d files into PVC %s", rs.Status.Files, rs.Spec.Target.PVCName)
-	if err := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
-		log.FromContext(ctx).Error(err, "delete finished job")
 	}
 	return nil
 }

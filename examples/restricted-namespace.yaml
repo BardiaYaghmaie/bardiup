@@ -1,0 +1,26 @@
+# Namespaces enforcing the "restricted" Pod Security Standard don't allow root.
+# Run the mover as the user that owns the data instead.
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: nightly
+spec:
+  schedule: "0 2 * * *"
+  storage:
+    s3:
+      bucket: my-backups
+      credentialsSecretRef:
+        name: s3-credentials
+  retention:
+    daily: 7
+  job:
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault

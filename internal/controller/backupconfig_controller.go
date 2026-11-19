@@ -52,7 +52,7 @@ func (r *BackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	res, err := r.reconcile(ctx, cfg)
 	cfg.Status.ObservedGeneration = cfg.Generation
 	if !equality.Semantic.DeepEqual(orig.Status, cfg.Status) {
-		if perr := r.Status().Patch(ctx, cfg, client.MergeFrom(orig)); perr != nil {
+		if _, perr := patchStatus(ctx, r.Client, cfg, orig); perr != nil {
 			return ctrl.Result{}, perr
 		}
 	}
@@ -299,9 +299,9 @@ func (r *BackupConfigReconciler) prune(ctx context.Context, cfg *v1alpha1.Backup
 			if !ok {
 				doomed[b.Name] = true
 			} else if !slices.Equal(b.Status.RetainedBy, reasons) {
-				patch := client.MergeFrom(b.DeepCopy())
+				orig := b.DeepCopy()
 				b.Status.RetainedBy = reasons
-				if err := r.Status().Patch(ctx, &b, patch); client.IgnoreNotFound(err) != nil {
+				if _, err := patchStatus(ctx, r.Client, &b, orig); client.IgnoreNotFound(err) != nil {
 					return nil, err
 				}
 			}

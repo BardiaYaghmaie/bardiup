@@ -1,0 +1,22 @@
+# Any S3-compatible store: MinIO, Ceph RGW, RustFS, Garage, SeaweedFS, Cloudflare R2,
+# Backblaze B2, Wasabi, Hetzner, OVH, Arvan, ...
+apiVersion: bardiup.io/v1alpha1
+kind: BackupConfig
+metadata:
+  name: nightly
+spec:
+  schedule: "@daily"
+  storage:
+    s3:
+      bucket: backups
+      endpoint: https://s3.example.internal:9000
+      forcePathStyle: true
+      credentialsSecretRef:
+        name: s3-credentials
+  retention:
+    keepLast: 3
+    daily: 7
+    monthly: 3
+  excludes:
+    - lost+found
+    - "*.tmp"

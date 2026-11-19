@@ -81,8 +81,6 @@ wait_all fanout backups Completed "$PVCS" 900
 for t in $(seq 1 "$TENANTS"); do wait_all "tenant-$t" backups Completed 2 300; done
 echo "$((PVCS + TENANTS * 2)) backups completed in $((SECONDS - start))s"
 kubectl -n fanout get backups --no-headers | head -5
-pinned=$(kubectl -n fanout get backups -o jsonpath='{range .items[*]}{.status.message}{"\n"}{end}' | grep -c . || true)
-echo "backups reporting status: $pinned"
 footprint
 
 # ---------------------------------------------------------------------------

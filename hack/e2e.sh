@@ -63,6 +63,9 @@ EOF
 kubectl -n app rollout status deploy/writer --timeout=180s
 EXPECTED=$(kubectl -n app exec deploy/writer -- sh -c 'cd /data/app && find . -type f -exec md5sum {} + | sort -k2 | md5sum')
 
+log "Validating examples/ against the installed CRDs"
+kubectl -n app apply --dry-run=server -f "$ROOT/examples/"
+
 log "Applying BackupConfig"
 kubectl -n app apply -f - <<EOF
 apiVersion: bardiup.io/v1alpha1
