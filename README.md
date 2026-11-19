@@ -76,10 +76,10 @@ Also weighing **K8up, VolSync, Longhorn backups or snapshot schedulers**? The co
 **1. Install** (Kubernetes 1.27+):
 
 ```bash
-helm install bardiup oci://ghcr.io/bardiayaghmaie/charts/bardiup --version 0.1.0 \
+helm install bardiup oci://ghcr.io/bardiayaghmaie/charts/bardiup --version 0.1.1 \
   -n bardiup-system --create-namespace
 # or, without Helm:
-kubectl apply --server-side -f https://github.com/BardiaYaghmaie/bardiup/releases/download/v0.1.0/bardiup.yaml
+kubectl apply --server-side -f https://github.com/BardiaYaghmaie/bardiup/releases/download/v0.1.1/bardiup.yaml
 ```
 
 Images are signed with Sigstore and ship with an SBOM and provenance. See [verifying a release](docs/security.md#verifying-a-release).
@@ -182,7 +182,7 @@ Every change runs through:
 
 ## Project status
 
-Bardiup **0.1.0** is the first public release. Everything described here is implemented and runs through the tests above on every change. The API is `v1alpha1`, so field names may still change before `v1`. Changes are always listed in the [changelog](CHANGELOG.md), and archives stay readable with `tar` whatever happens to the API.
+Bardiup **0.1** is the first public release line. Everything described here is implemented and runs through the tests above on every change. The API is `v1alpha1`, so field names may still change before `v1`. Changes are always listed in the [changelog](CHANGELOG.md), and archives stay readable with `tar` whatever happens to the API.
 
 Running it? [Tell us how it goes](https://github.com/BardiaYaghmaie/bardiup/issues): what you back up, which object store, and what was missing. That feedback decides what goes into 0.2.
 

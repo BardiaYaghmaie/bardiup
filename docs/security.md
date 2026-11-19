@@ -69,7 +69,7 @@ Prefer workload identity (IRSA, EKS Pod Identity, GKE/Azure equivalents with S3-
 Release images are built by GitHub Actions from the tagged commit, signed keylessly with [Sigstore cosign](https://docs.sigstore.dev/), and published with an SBOM and SLSA provenance attestation. To check that an image was built by this repository's release workflow:
 
 ```bash
-cosign verify ghcr.io/bardiayaghmaie/bardiup:0.1.0 \
+cosign verify ghcr.io/bardiayaghmaie/bardiup:0.1.1 \
   --certificate-identity-regexp '^https://github.com/BardiaYaghmaie/bardiup/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -77,8 +77,8 @@ cosign verify ghcr.io/bardiayaghmaie/bardiup:0.1.0 \
 To inspect the SBOM and provenance:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/bardiayaghmaie/bardiup:0.1.0 --format '{{ json .SBOM }}'
-docker buildx imagetools inspect ghcr.io/bardiayaghmaie/bardiup:0.1.0 --format '{{ json .Provenance }}'
+docker buildx imagetools inspect ghcr.io/bardiayaghmaie/bardiup:0.1.1 --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/bardiayaghmaie/bardiup:0.1.1 --format '{{ json .Provenance }}'
 ```
 
 The image is distroless (`static-debian12:nonroot`), contains a single static binary, and has no shell or package manager.
