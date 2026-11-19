@@ -32,6 +32,10 @@ nightly-data-pg-0-20261115-020000   data-pg-0   Completed   1.1 GiB   ["daily","
 nightly-data-pg-0-20261031-020000   data-pg-0   Completed   1.1 GiB   ["monthly"]                             19d         19d
 ```
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Creating a BackupConfig, taking a backup, listing the plain tar.gz in the bucket and restoring it into a new PVC" width="900">
+</p>
+
 After a year of nightly backups, that policy keeps **20 archives instead of 365**, and every one of them tells you why it's still there.
 
 ---
