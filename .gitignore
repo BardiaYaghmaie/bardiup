@@ -1,15 +1,7 @@
-# Coverage files
+bin/
+dist/
+cover.out
 *.out
-coverage*.out
-*_coverage.out
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS files
 .DS_Store
-Thumbs.db
+.idea/
+.vscode/

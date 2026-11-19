@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Generated code is up to date
+        run: make generate manifests && git diff --exit-code
+      - name: Lint
+        run: make lint
+      - name: Unit and integration tests
+        run: make test
+      - name: Fuzz
+        run: make fuzz
+      - name: Helm lint
+        run: helm lint charts/bardiup --strict
+      - name: Shellcheck
+        run: shellcheck -x hack/*.sh
+
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        snapshot: ["", "1"]
+    name: e2e${{ matrix.snapshot && ' (snapshot)' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go install sigs.k8s.io/kind@v0.33.0
+      - run: ./hack/e2e.sh
+        env:
+          E2E_SNAPSHOT: ${{ matrix.snapshot }}
+
+  stress:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go install sigs.k8s.io/kind@v0.33.0
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - run: ./hack/stress.sh

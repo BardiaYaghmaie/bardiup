@@ -1,0 +1,13 @@
+Bardiup {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+
+Next steps, in the namespace whose PVCs you want to protect:
+
+  1. Store S3 credentials:
+       kubectl -n <ns> create secret generic s3-credentials \
+         --from-literal=AWS_ACCESS_KEY_ID=... --from-literal=AWS_SECRET_ACCESS_KEY=...
+
+  2. Create a BackupConfig (see https://github.com/BardiaYaghmaie/bardiup#quick-start)
+
+  3. Take a backup right now:
+       kubectl -n <ns> annotate backupconfig <name> bardiup.io/backup-now="$(date +%s)" --overwrite
+       kubectl -n <ns> get backups -w

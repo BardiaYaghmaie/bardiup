@@ -1,17 +1,22 @@
 apiVersion: v2
 name: bardiup
-description: A Kubernetes PVC backup controller with dynamic retention policies
+description: Lightweight, namespace-scoped PVC backups to S3 with Grandfather-Father-Son retention.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/BardiaYaghmaie/bardiup
+sources:
+  - https://github.com/BardiaYaghmaie/bardiup
 keywords:
   - backup
+  - restore
   - pvc
   - persistent-volume
-  - retention
   - s3
+  - retention
+  - gfs
+  - disaster-recovery
 maintainers:
-  - name: Bardia
-sources:
-  - https://github.com/bardiup/bardiup
-home: https://github.com/bardiup/bardiup
+  - name: Bardia Yaghmaie
+    url: https://github.com/BardiaYaghmaie

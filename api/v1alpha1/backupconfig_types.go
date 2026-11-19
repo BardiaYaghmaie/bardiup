@@ -4,166 +4,185 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// BackupConfigSpec defines the desired state of BackupConfig
+// BackupConfigSpec defines which PVCs to back up, when, where to, and how long to keep the results.
 type BackupConfigSpec struct {
-	// PVCSelector defines which PVCs to backup
-	PVCSelector PVCSelector `json:"pvcSelector"`
-
-	// Schedule defines when to run backups (cron format)
+	// Schedule in standard 5-field cron format, or a descriptor such as @daily or @every 6h.
+	// +kubebuilder:validation:MinLength=1
 	Schedule string `json:"schedule"`
 
-	// StorageBackend defines where to store backups
-	StorageBackend StorageBackend `json:"storageBackend"`
+	// TimeZone (IANA name, e.g. Europe/Berlin) used for the schedule and for calendar-based retention.
+	// Defaults to UTC.
+	// +optional
+	TimeZone string `json:"timeZone,omitempty"`
 
-	// RetentionPolicy defines the retention rules for backups
-	RetentionPolicy RetentionPolicy `json:"retentionPolicy"`
+	// PVCSelector selects PVCs in the BackupConfig's namespace. An empty selector matches every PVC.
+	// +optional
+	PVCSelector PVCSelector `json:"pvcSelector,omitempty"`
 
-	// Paused indicates if backup schedule is paused
-	Paused bool `json:"paused,omitempty"`
+	// Storage is the object store receiving backup archives.
+	Storage StorageSpec `json:"storage"`
 
-	// BackupMethod defines how to backup (snapshot vs copy)
-	BackupMethod BackupMethod `json:"backupMethod,omitempty"`
+	// Retention decides which completed backups are kept. Without any rule every backup is kept.
+	// +optional
+	Retention RetentionPolicy `json:"retention,omitempty"`
+
+	// Method used to read volume data.
+	// +kubebuilder:default=copy
+	// +optional
+	Method BackupMethod `json:"method,omitempty"`
+
+	// Snapshot options for method snapshot.
+	// +optional
+	Snapshot *SnapshotOptions `json:"snapshot,omitempty"`
+
+	// Excludes are glob patterns (path.Match syntax) of paths, relative to the volume root, to skip.
+	// A pattern matching a directory skips its whole subtree. Example: ["lost+found", "cache/*", "*.tmp"].
+	// +optional
+	Excludes []string `json:"excludes,omitempty"`
+
+	// Job customises the data mover Jobs.
+	// +optional
+	Job JobOptions `json:"job,omitempty"`
+
+	// Suspend stops new scheduled backups. Retention keeps running.
+	// +optional
+	Suspend bool `json:"suspend,omitempty"`
+
+	// FailedBackupsHistoryLimit is how many failed backups per PVC are kept for inspection.
+	// +kubebuilder:default=3
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	FailedBackupsHistoryLimit *int32 `json:"failedBackupsHistoryLimit,omitempty"`
 }
 
-// PVCSelector defines how to select PVCs for backup
+// PVCSelector selects PVCs by label and/or name.
 type PVCSelector struct {
-	// Namespace to select PVCs from
-	Namespace string `json:"namespace"`
-
-	// MatchLabels is a map of labels to match PVCs
+	// MatchLabels selects PVCs having all these labels.
+	// +optional
 	MatchLabels map[string]string `json:"matchLabels,omitempty"`
 
-	// MatchNames is a list of PVC names to match
-	MatchNames []string `json:"matchNames,omitempty"`
+	// MatchExpressions are label selector requirements.
+	// +optional
+	MatchExpressions []metav1.LabelSelectorRequirement `json:"matchExpressions,omitempty"`
+
+	// Names restricts the selection to these PVC names.
+	// +optional
+	Names []string `json:"names,omitempty"`
 }
 
-// StorageBackend defines the storage backend configuration
-type StorageBackend struct {
-	// Type of storage backend (s3, azure, gcs)
-	Type string `json:"type"`
-
-	// S3 configuration (if type is s3)
-	S3 *S3Backend `json:"s3,omitempty"`
-
-	// Prefix for backup paths in object storage
-	Prefix string `json:"prefix,omitempty"`
-}
-
-// S3Backend defines S3 storage configuration
-type S3Backend struct {
-	// Bucket name
-	Bucket string `json:"bucket"`
-
-	// Region
-	Region string `json:"region"`
-
-	// Endpoint for S3-compatible storage
-	Endpoint string `json:"endpoint,omitempty"`
-
-	// CredentialsSecret references a secret with AWS credentials
-	CredentialsSecret string `json:"credentialsSecret"`
-
-	// ForcePathStyle for S3-compatible storage
-	ForcePathStyle bool `json:"forcePathStyle,omitempty"`
-}
-
-// RetentionPolicy defines dynamic retention rules
+// RetentionPolicy is a Grandfather-Father-Son policy evaluated over completed backups.
+//
+// Each rule keeps the newest backup in each of the last N calendar periods that contain a backup
+// (hours, days, ISO weeks, months, years in spec.timeZone). A backup is kept when any rule keeps it.
+// Semantics match restic/borg "forget --keep-*".
 type RetentionPolicy struct {
-	// Daily defines daily backup retention
-	Daily *RetentionRule `json:"daily,omitempty"`
+	// KeepLast always keeps the N most recent backups.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	KeepLast *int32 `json:"keepLast,omitempty"`
 
-	// Weekly defines weekly backup retention
-	Weekly *RetentionRule `json:"weekly,omitempty"`
+	// Hourly keeps the newest backup of each of the last N hours.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Hourly *int32 `json:"hourly,omitempty"`
 
-	// Monthly defines monthly backup retention
-	Monthly *RetentionRule `json:"monthly,omitempty"`
+	// Daily keeps the newest backup of each of the last N days.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Daily *int32 `json:"daily,omitempty"`
 
-	// Yearly defines yearly backup retention
-	Yearly *RetentionRule `json:"yearly,omitempty"`
+	// Weekly keeps the newest backup of each of the last N ISO weeks.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Weekly *int32 `json:"weekly,omitempty"`
 
-	// Custom defines custom retention rules
+	// Monthly keeps the newest backup of each of the last N months.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Monthly *int32 `json:"monthly,omitempty"`
+
+	// Yearly keeps the newest backup of each of the last N years.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Yearly *int32 `json:"yearly,omitempty"`
+
+	// Custom rules use fixed-length periods, e.g. every 90d (quarterly) or every 6h.
+	// +optional
+	// +listType=map
+	// +listMapKey=every
 	Custom []CustomRetention `json:"custom,omitempty"`
 }
 
-// RetentionRule defines how many backups to keep for a period
-type RetentionRule struct {
-	// Keep defines how many backups to keep
-	Keep int `json:"keep"`
-
-	// SelectionStrategy defines how to select which backups to keep (newest, oldest, distributed)
-	SelectionStrategy string `json:"selectionStrategy,omitempty"`
-}
-
-// CustomRetention allows defining custom retention periods
+// CustomRetention keeps the newest backup in each of the last Keep periods of length Every.
 type CustomRetention struct {
-	// Period in days (e.g., 90 for quarterly)
-	// If PeriodHours is set, this is ignored
-	PeriodDays int `json:"periodDays,omitempty"`
+	// Every is the period length: an integer followed by h (hours), d (days) or w (weeks). Example: 90d.
+	// +kubebuilder:validation:Pattern=`^[1-9][0-9]*[hdw]$`
+	Every string `json:"every"`
 
-	// Period in hours (e.g., 1 for 1 hour, 3 for 3 hours)
-	// Takes precedence over PeriodDays if both are set
-	PeriodHours int `json:"periodHours,omitempty"`
-
-	// Keep defines how many backups to keep for this period
-	Keep int `json:"keep"`
-
-	// SelectionStrategy defines how to select which backups to keep
-	SelectionStrategy string `json:"selectionStrategy,omitempty"`
+	// Keep is the number of periods to keep a backup for.
+	// +kubebuilder:validation:Minimum=1
+	Keep int32 `json:"keep"`
 }
 
-// BackupMethod defines how to perform the backup
-type BackupMethod string
-
-const (
-	// BackupMethodSnapshot uses volume snapshots
-	BackupMethodSnapshot BackupMethod = "snapshot"
-	// BackupMethodCopy copies data directly
-	BackupMethodCopy BackupMethod = "copy"
-)
-
-// BackupConfigStatus defines the observed state of BackupConfig
+// BackupConfigStatus is the observed state of a BackupConfig.
 type BackupConfigStatus struct {
-	// LastBackupTime is the last time a backup was taken
-	LastBackupTime *metav1.Time `json:"lastBackupTime,omitempty"`
+	// ObservedGeneration is the last spec generation processed.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// LastSuccessfulBackupTime is the last time a backup succeeded
-	LastSuccessfulBackupTime *metav1.Time `json:"lastSuccessfulBackupTime,omitempty"`
+	// LastScheduleTime is when backups were last started by this config.
+	// +optional
+	LastScheduleTime *metav1.Time `json:"lastScheduleTime,omitempty"`
 
-	// NextScheduledTime is when the next backup is scheduled
-	NextScheduledTime *metav1.Time `json:"nextScheduledTime,omitempty"`
+	// NextScheduleTime is when the next scheduled run is due.
+	// +optional
+	NextScheduleTime *metav1.Time `json:"nextScheduleTime,omitempty"`
 
-	// BackupCount is the total number of backups
-	BackupCount int `json:"backupCount,omitempty"`
+	// LastSuccessfulTime is the completion time of the newest successful backup.
+	// +optional
+	LastSuccessfulTime *metav1.Time `json:"lastSuccessfulTime,omitempty"`
 
-	// ActiveBackups is the list of active backup names
-	ActiveBackups []string `json:"activeBackups,omitempty"`
+	// LastBackupNowTrigger is the last processed value of the bardiup.io/backup-now annotation.
+	// +optional
+	LastBackupNowTrigger string `json:"lastBackupNowTrigger,omitempty"`
 
-	// Conditions represent the latest available observations
+	// SelectedPVCs is the number of PVCs matched by the selector at the last reconcile.
+	// +optional
+	SelectedPVCs int32 `json:"selectedPVCs"`
+
+	// CompletedBackups is the number of retained completed backups.
+	// +optional
+	CompletedBackups int32 `json:"completedBackups"`
+
+	// FailedBackups is the number of retained failed backups.
+	// +optional
+	FailedBackups int32 `json:"failedBackups"`
+
+	// ActiveBackups is the number of backups pending or running.
+	// +optional
+	ActiveBackups int32 `json:"activeBackups"`
+
+	// Conditions: Ready (spec valid and storage reachable) and LastBackupSucceeded.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// Phase represents the current phase of the backup config
-	Phase BackupConfigPhase `json:"phase,omitempty"`
 }
-
-// BackupConfigPhase represents the phase of backup configuration
-type BackupConfigPhase string
-
-const (
-	BackupConfigPhaseReady   BackupConfigPhase = "Ready"
-	BackupConfigPhasePending BackupConfigPhase = "Pending"
-	BackupConfigPhaseError   BackupConfigPhase = "Error"
-	BackupConfigPhasePaused  BackupConfigPhase = "Paused"
-)
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:resource:scope=Namespaced,shortName=bcfg,categories=bardiup
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63",message="name must be at most 63 characters (it is used as a label value)"
 // +kubebuilder:printcolumn:name="Schedule",type=string,JSONPath=`.spec.schedule`
-// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Last Backup",type=date,JSONPath=`.status.lastBackupTime`
+// +kubebuilder:printcolumn:name="Suspend",type=boolean,JSONPath=`.spec.suspend`
+// +kubebuilder:printcolumn:name="PVCs",type=integer,JSONPath=`.status.selectedPVCs`
+// +kubebuilder:printcolumn:name="Backups",type=integer,JSONPath=`.status.completedBackups`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Last Success",type=date,JSONPath=`.status.lastSuccessfulTime`
+// +kubebuilder:printcolumn:name="Next",type=string,JSONPath=`.status.nextScheduleTime`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// BackupConfig is the Schema for the backupconfigs API
+// BackupConfig schedules backups of PVCs in its namespace and enforces a retention policy.
 type BackupConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -174,13 +193,9 @@ type BackupConfig struct {
 
 // +kubebuilder:object:root=true
 
-// BackupConfigList contains a list of BackupConfig
+// BackupConfigList contains a list of BackupConfig.
 type BackupConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []BackupConfig `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&BackupConfig{}, &BackupConfigList{})
 }
