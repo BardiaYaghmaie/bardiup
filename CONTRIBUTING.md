@@ -20,7 +20,7 @@ make test      # unit and integration tests, no cluster needed
 make lint      # golangci-lint
 make fuzz      # fuzz the archive extractor and the retention engine
 make e2e       # full end-to-end test on a throwaway kind cluster
-make stress    # scale, large volume and chaos tests (takes ~30 minutes)
+make stress    # scale, large volume and chaos tests (takes ~15 minutes)
 ```
 
 The e2e and stress scripts create their own cluster and kubeconfig, so they never touch your current context. To run them against an existing test cluster, see the header of [hack/lib.sh](hack/lib.sh).

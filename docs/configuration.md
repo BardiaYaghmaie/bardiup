@@ -168,13 +168,18 @@ Phases: `Pending` (waiting for the backup to complete) → `Running` → `Comple
 |---|---|---|
 | `image.repository` | `ghcr.io/bardiayaghmaie/bardiup` | Controller and mover image. |
 | `image.tag` | chart appVersion | |
+| `image.pullPolicy` | `IfNotPresent` | Also used for mover pods. |
 | `replicaCount` | `1` | Use 2 for faster failover; only the leader works. |
 | `logLevel` | `info` | `info`, `debug` or a number. |
 | `resources` | 10m / 48Mi request, 256Mi limit | Controller resources. |
 | `serviceAccount.annotations` | `{}` | For example an IRSA role. |
 | `aggregateToDefaultRoles` | `true` | Grant the built-in `admin`/`edit`/`view` roles access to Bardiup resources. |
 | `metrics.enabled` | `true` | Expose Prometheus metrics on a Service. |
+| `metrics.port` | `8080` | Metrics port. |
 | `metrics.serviceMonitor.enabled` | `false` | Create a ServiceMonitor (Prometheus Operator). |
+| `metrics.serviceMonitor.interval` | `30s` | Scrape interval. |
+| `metrics.serviceMonitor.labels` | `{}` | Extra labels, for example to match your Prometheus' `serviceMonitorSelector`. |
 | `metrics.prometheusRule.enabled` | `false` | Create the default alerts. |
+| `metrics.prometheusRule.labels` | `{}` | Extra labels, for example to match your Prometheus' `ruleSelector`. |
 | `metrics.prometheusRule.staleAfterHours` | `26` | Alert threshold for a PVC with no recent successful backup. |
 | `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `podAnnotations`, `podLabels`, `imagePullSecrets` | | Standard scheduling options for the controller. |

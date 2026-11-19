@@ -31,6 +31,7 @@ Some properties worth knowing:
 - **Periods follow `spec.timeZone`.** With `timeZone: Asia/Tehran`, "a day" starts at local midnight. The schedule uses the same zone.
 - **Custom periods are epoch-aligned.** `every: 90d` splits time into 90-day blocks starting at the Unix epoch (in `spec.timeZone`).
 - **No rules means keep everything.** Retention never deletes anything until you configure it.
+- **Failed backups never count.** A rule only counts periods that have a *completed* backup. If backups fail for two weeks, `daily: 7` still keeps the last seven good days instead of letting them expire.
 
 ## What gets pruned
 
@@ -51,16 +52,18 @@ kubectl delete backups -l bardiup.io/backup-config=<name>
 
 ## Seeing why a backup is kept
 
-Every retained backup shows which rules keep it:
+Every retained backup shows which rules keep it. With `keepLast: 2, daily: 7, weekly: 4, monthly: 12, yearly: 5`:
 
 ```console
 $ kubectl get backups
-NAME                                 PVC         PHASE       SIZE       RETAINED BY                 COMPLETED   AGE
-nightly-data-pg-0-20261119-020000   data-pg-0   Completed   1.2 GiB    ["last","daily","weekly","monthly","yearly"]   8h   8h
-nightly-data-pg-0-20261118-020000   data-pg-0   Completed   1.2 GiB    ["last","daily"]            32h         32h
-nightly-data-pg-0-20261116-020000   data-pg-0   Completed   1.1 GiB    ["daily","weekly"]          3d8h        3d8h
-nightly-data-pg-0-20261031-020000   data-pg-0   Completed   1.1 GiB    ["monthly"]                 19d         19d
+NAME                                PVC         PHASE       SIZE      RETAINED BY                                    COMPLETED   AGE
+nightly-data-pg-0-20261119-020000   data-pg-0   Completed   1.2 GiB   ["last","daily","weekly","monthly","yearly"]   8h          8h
+nightly-data-pg-0-20261118-020000   data-pg-0   Completed   1.2 GiB   ["last","daily"]                               32h         32h
+nightly-data-pg-0-20261115-020000   data-pg-0   Completed   1.1 GiB   ["daily","weekly"]                             4d8h        4d8h
+nightly-data-pg-0-20261031-020000   data-pg-0   Completed   1.1 GiB   ["monthly"]                                    19d         19d
 ```
+
+The Sunday backup (15 November) is `weekly` because it's the newest of its ISO week; the Monday-to-Thursday backups after it belong to the current week, which the 19 November backup already covers. Custom rules show up as `every-<period>`, for example `every-90d`.
 
 A backup without a rule in `RETAINED BY` will be pruned at the next reconcile. This makes it easy to answer "will my October backup still be here next month?" before it matters.
 

@@ -25,11 +25,11 @@ spec:
 
 ```console
 $ kubectl -n shop get backups
-NAME                                PVC         PHASE       SIZE      RETAINED BY                                     COMPLETED
-nightly-data-pg-0-20261119-020000   data-pg-0   Completed   1.2 GiB   ["daily","weekly","monthly","yearly"]           7h
-nightly-data-pg-0-20261118-020000   data-pg-0   Completed   1.2 GiB   ["daily"]                                       31h
-nightly-data-pg-0-20261116-020000   data-pg-0   Completed   1.1 GiB   ["daily","weekly"]                              3d7h
-nightly-data-pg-0-20261031-020000   data-pg-0   Completed   1.1 GiB   ["monthly"]                                     19d
+NAME                                PVC         PHASE       SIZE      RETAINED BY                             COMPLETED   AGE
+nightly-data-pg-0-20261119-020000   data-pg-0   Completed   1.2 GiB   ["daily","weekly","monthly","yearly"]   7h          7h
+nightly-data-pg-0-20261118-020000   data-pg-0   Completed   1.2 GiB   ["daily"]                               31h         31h
+nightly-data-pg-0-20261115-020000   data-pg-0   Completed   1.1 GiB   ["daily","weekly"]                      4d7h        4d7h
+nightly-data-pg-0-20261031-020000   data-pg-0   Completed   1.1 GiB   ["monthly"]                             19d         19d
 ```
 
 After a year of nightly backups, that policy keeps **20 archives instead of 365**, and every one of them tells you why it's still there.
@@ -43,6 +43,7 @@ After a year of nightly backups, that policy keeps **20 archives instead of 365*
 | | Bardiup | Velero |
 |---|---|---|
 | **Retention** | GFS per PVC: `hourly/daily/weekly/monthly/yearly/custom`, calendar- and time-zone-aware | One TTL per schedule (default 30 days). GFS means juggling several schedules. |
+| **When backups keep failing** | Your last good backups stay: rules count periods that *have* a backup | TTLs are wall-clock time, so good backups keep expiring during an outage |
 | **Who can back up** | Any namespace owner: namespaced CRDs aggregated into `admin`/`edit`/`view` | Cluster admins: Backup and Schedule objects live in Velero's namespace |
 | **Backup format** | Plain `tar.gz` + JSON manifest + SHA-256. Restore with `tar`. | Kopia repository: deduplicated and encrypted, readable only through Velero/Kopia |
 | **What runs on your nodes** | Nothing between backups. One short-lived Job per volume, mounting just that volume. | File-system backup needs a node-agent DaemonSet on every node with `hostPath` access to `/var/lib/kubelet/pods` |
@@ -51,6 +52,8 @@ After a year of nightly backups, that policy keeps **20 archives instead of 365*
 | **Footprint** | One Deployment, ~45 MB RAM; one 14 MB distroless image for both controller and mover | Server + node-agent DaemonSet + provider plugin images |
 
 **Use Velero instead** when you need to back up and migrate Kubernetes *resources* (Deployments, ConfigMaps, whole namespaces), want deduplicated incremental backups of very large volumes, or need cloud-provider snapshot plugins and pre/post hooks. The two work well together: Velero (or GitOps) for manifests, Bardiup for volume data with real retention. See the [detailed comparison](docs/comparison.md).
+
+Also weighing **K8up, VolSync, Longhorn backups or snapshot schedulers**? The comparison has a side-by-side table of all of them and a "pick in 30 seconds" guide, including what Bardiup doesn't do yet.
 
 ## Features
 
@@ -69,9 +72,13 @@ After a year of nightly backups, that policy keeps **20 archives instead of 365*
 **1. Install** (Kubernetes 1.27+):
 
 ```bash
-helm install bardiup oci://ghcr.io/bardiayaghmaie/charts/bardiup -n bardiup-system --create-namespace
-# or: kubectl apply --server-side -f https://github.com/BardiaYaghmaie/bardiup/releases/latest/download/bardiup.yaml
+helm install bardiup oci://ghcr.io/bardiayaghmaie/charts/bardiup --version 0.1.0 \
+  -n bardiup-system --create-namespace
+# or, without Helm:
+kubectl apply --server-side -f https://github.com/BardiaYaghmaie/bardiup/releases/download/v0.1.0/bardiup.yaml
 ```
+
+Images are signed with Sigstore and ship with an SBOM and provenance. See [verifying a release](docs/security.md#verifying-a-release).
 
 **2. Store credentials** in the namespace you want to protect:
 
@@ -163,8 +170,14 @@ Every change runs through:
 | [Restore and disaster recovery](docs/restore.md) | New PVC, in place, cross-cluster, without Bardiup |
 | [Security model](docs/security.md) | Multi-tenancy, RBAC, mover privileges, encryption |
 | [Operations](docs/operations.md) | Metrics, alerts, troubleshooting, sizing, upgrades |
-| [Comparison](docs/comparison.md) | Bardiup vs Velero and others, honestly |
-| [Examples](examples/) | Ready-to-apply manifests |
+| [Comparison](docs/comparison.md) | Bardiup vs Velero, K8up, VolSync, Longhorn and snapshot tools, honestly |
+| [Examples](examples/) | Ready-to-apply manifests for common setups |
+
+## Project status
+
+Bardiup **0.1.0** is the first public release. Everything described here is implemented and runs through the tests above on every change. The API is `v1alpha1`, so field names may still change before `v1`. Changes are always listed in the [changelog](CHANGELOG.md), and archives stay readable with `tar` whatever happens to the API.
+
+Running it? [Tell us how it goes](https://github.com/BardiaYaghmaie/bardiup/issues): what you back up, which object store, and what was missing. That feedback decides what goes into 0.2.
 
 ## Roadmap
 
@@ -175,7 +188,7 @@ Every change runs through:
 - A `kubectl bardiup` plugin (`backup now`, `restore`, `ls` the bucket)
 - Retention dry-run preview
 
-Ideas and feedback are very welcome. [Open an issue](https://github.com/BardiaYaghmaie/bardiup/issues) and tell us how you back up your volumes today.
+Ideas are very welcome: [open an issue](https://github.com/BardiaYaghmaie/bardiup/issues) and tell us how you back up your volumes today.
 
 ## Contributing
 

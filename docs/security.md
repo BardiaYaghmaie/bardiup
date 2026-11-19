@@ -64,6 +64,25 @@ Files that user can't read make the backup fail, so you never end up with a sile
 
 Prefer workload identity (IRSA, EKS Pod Identity, GKE/Azure equivalents with S3-compatible gateways) over static keys. With static keys, scope them to the bucket and prefix the namespace uses. Each namespace can have its own credentials and its own bucket.
 
+## Verifying a release
+
+Release images are built by GitHub Actions from the tagged commit, signed keylessly with [Sigstore cosign](https://docs.sigstore.dev/), and published with an SBOM and SLSA provenance attestation. To check that an image was built by this repository's release workflow:
+
+```bash
+cosign verify ghcr.io/bardiayaghmaie/bardiup:0.1.0 \
+  --certificate-identity-regexp '^https://github.com/BardiaYaghmaie/bardiup/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+To inspect the SBOM and provenance:
+
+```bash
+docker buildx imagetools inspect ghcr.io/bardiayaghmaie/bardiup:0.1.0 --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/bardiayaghmaie/bardiup:0.1.0 --format '{{ json .Provenance }}'
+```
+
+The image is distroless (`static-debian12:nonroot`), contains a single static binary, and has no shell or package manager.
+
 ## Reporting vulnerabilities
 
 See [SECURITY.md](../SECURITY.md).

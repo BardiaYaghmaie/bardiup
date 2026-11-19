@@ -74,10 +74,16 @@ For databases, combine `snapshot` with the database's own crash-recovery, or bac
 helm upgrade bardiup oci://ghcr.io/bardiayaghmaie/charts/bardiup --version <new> -n bardiup-system
 ```
 
-Helm doesn't upgrade CRDs. Apply them first:
+Helm doesn't upgrade CRDs. Apply them first, from the chart you're upgrading to:
 
 ```bash
-kubectl apply --server-side -f https://github.com/BardiaYaghmaie/bardiup/releases/download/<version>/bardiup.yaml
+helm show crds oci://ghcr.io/bardiayaghmaie/charts/bardiup --version <new> | kubectl apply --server-side -f -
+```
+
+If you installed with the single-file manifest instead of Helm, apply the new release's `bardiup.yaml`, which upgrades the CRDs and the controller together:
+
+```bash
+kubectl apply --server-side -f https://github.com/BardiaYaghmaie/bardiup/releases/download/v<new>/bardiup.yaml
 ```
 
 The `v1alpha1` API may change before `v1`. Changes are listed in the [changelog](../CHANGELOG.md).
@@ -86,6 +92,7 @@ The `v1alpha1` API may change before `v1`. Changes are listed in the [changelog]
 
 ```bash
 helm uninstall bardiup -n bardiup-system
+# or: kubectl delete -f https://github.com/BardiaYaghmaie/bardiup/releases/download/v<version>/bardiup.yaml
 ```
 
 Backups stay in the bucket. The CRDs and `Backup` objects stay in the cluster. `Backup` objects carry a finalizer, so remove backups **before** uninstalling if you want their data deleted, or strip the finalizers if you want to keep the data and drop the objects:
