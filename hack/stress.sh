@@ -239,10 +239,10 @@ EOF
     [[ "$(kubectl -n nodefail get pod -l job-name=backup-lost -o jsonpath='{.items[0].status.phase}' 2>/dev/null)" == Running ]] && break
     sleep 1
   done
-  docker stop "$node" >/dev/null
+  docker pause "$node" >/dev/null # unreachable, like a lost node; stop/start would change its IP
   wait_for nodefail backup/lost '{.status.phase}' Failed 400
   [[ "$(objects nodefail)" == 0 ]] || fail "a lost backup left objects in the bucket"
-  docker start "$node" >/dev/null
+  docker unpause "$node" >/dev/null
   kubectl wait --for=condition=Ready "node/$node" --timeout=300s
   kubectl -n nodefail rollout status sts/big --timeout=300s
   node_backup retry
