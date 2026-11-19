@@ -2,7 +2,8 @@
 # Creates a kind cluster with Bardiup, an S3 server and a small "shop" app for demo.tape.
 # Usage: DEMO_KUBECONFIG=/tmp/demo-kubeconfig docs/demo/setup.sh && KUBECONFIG=/tmp/demo-kubeconfig vhs docs/demo/demo.tape
 # shellcheck source=hack/lib.sh
-E2E_KEEP=1 CLUSTER=bardiup-demo source "$(dirname "$0")/../../hack/lib.sh"
+export E2E_KEEP=1 CLUSTER=bardiup-demo
+source "$(dirname "$0")/../../hack/lib.sh"
 
 setup_cluster 1
 deploy_s3
