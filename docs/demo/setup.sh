@@ -36,12 +36,23 @@ kubectl -n shop rollout status deploy/postgres --timeout=180s
 cat >"$ROOT/docs/demo/nightly.yaml" <<YAML
 apiVersion: bardiup.io/v1alpha1
 kind: BackupConfig
-metadata: {name: nightly}
+metadata:
+  name: nightly
 spec:
   schedule: "0 2 * * *"
-  pvcSelector: {matchLabels: {app: postgres}}
-  storage: $(s3_storage prod)
-  retention: {daily: 7, weekly: 4, monthly: 12, yearly: 5}
+  pvcSelector:
+    matchLabels: {app: postgres}
+  storage:
+    s3:
+      bucket: backups
+      endpoint: $S3_ENDPOINT
+      forcePathStyle: true
+      credentialsSecretRef: {name: s3}
+  retention:
+    daily: 7
+    weekly: 4
+    monthly: 12
+    yearly: 5
 YAML
 cp "$KUBECONFIG" "$DEMO_KUBECONFIG"
 log "Demo ready"
