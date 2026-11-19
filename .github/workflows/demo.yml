@@ -1,0 +1,31 @@
+name: Demo GIF
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [demo-gif]
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go install sigs.k8s.io/kind@v0.33.0
+      - run: docs/demo/setup.sh
+        env:
+          DEMO_KUBECONFIG: /tmp/demo-kubeconfig
+      - uses: charmbracelet/vhs-action@v2
+        with:
+          path: docs/demo/demo.tape
+        env:
+          KUBECONFIG: /tmp/demo-kubeconfig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: demo
+          path: docs/demo.gif
