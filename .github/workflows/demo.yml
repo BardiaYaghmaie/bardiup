@@ -2,8 +2,6 @@ name: Demo GIF
 
 on:
   workflow_dispatch:
-  push:
-    branches: [demo-gif]
 
 permissions:
   contents: read
