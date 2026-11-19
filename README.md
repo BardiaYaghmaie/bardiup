@@ -153,7 +153,7 @@ Every change runs through:
 - **Unit and integration tests** for every controller path, with race detection, plus round-trip tests against an in-memory S3.
 - **Fuzzing** of the archive extractor (path-traversal safety) and of the retention engine (invariants: newest always kept, stable, bounded).
 - **End-to-end on kind** with a real S3 server. Back up a live RWO volume, prune, verify the archive with GNU `tar` and `sha256sum`, restore into a new PVC and into another namespace from the bucket key alone, then compare content, ownership and modes. Both `copy` and CSI `snapshot` methods, on Kubernetes 1.27 and the latest release, on amd64 and arm64.
-- **A real database.** PostgreSQL under `pgbench` write load is snapshotted, restored, started, and checked with `pg_amcheck`.
+- **A real database.** A running PostgreSQL is snapshotted after a `pgbench` write load, restored, crash-recovered from its WAL, and checked with `pg_amcheck`.
 - **Locked-down namespaces.** In a namespace enforcing the `restricted` Pod Security Standard, backups fail fast as root and succeed as the data owner.
 - **Stress and chaos on a multi-node kind cluster:**
   - dozens of PVCs across tenants at once

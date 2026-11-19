@@ -180,7 +180,7 @@ kubectl -n locked get backup as-root -o jsonpath='{.status.message}' | grep -qi 
 wait_for locked backup/as-owner '{.status.phase}' Completed 300
 
 if [[ -n "${E2E_SNAPSHOT:-}" ]]; then
-  log "Snapshot of PostgreSQL under write load: restored database recovers and passes amcheck"
+  log "Snapshot of a running PostgreSQL: the restored copy replays its WAL and passes amcheck"
   kubectl -n app apply -f - <<'EOF'
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -196,6 +196,10 @@ spec:
   containers:
     - name: pg
       image: postgres:17-alpine
+      # No background flushes or checkpoints: after the load, the data files lag the WAL, so the
+      # restore has to crash-recover. (The hostpath test driver snapshots with tar, which fails on
+      # files that change mid-snapshot, so the load itself can't overlap the snapshot here.)
+      args: [-c, autovacuum=off, -c, bgwriter_lru_maxpages=0, -c, checkpoint_timeout=1h, -c, max_wal_size=4GB]
       env: [{name: POSTGRES_PASSWORD, value: e2e}, {name: PGDATA, value: /var/lib/postgresql/data/pgdata}]
       readinessProbe: {exec: {command: [pg_isready, -U, postgres]}, periodSeconds: 2}
       volumeMounts: [{name: d, mountPath: /var/lib/postgresql/data}]
@@ -205,9 +209,7 @@ EOF
   }
   postgres pg pg
   kubectl -n app exec pg -- pgbench -U postgres -i -q -s 5 postgres
-  kubectl -n app exec pg -- pgbench -U postgres -c 4 -T 60 postgres >/dev/null &
-  LOAD=$!
-  sleep 5
+  kubectl -n app exec pg -- pgbench -U postgres -c 4 -T 20 postgres >/dev/null
   kubectl -n app apply -f - <<EOF
 apiVersion: bardiup.io/v1alpha1
 kind: Backup
@@ -219,7 +221,6 @@ spec:
   storage: $(s3_storage pg)
 EOF
   wait_for app backup/pg '{.status.phase}' Completed 300
-  wait "$LOAD"
   kubectl -n app apply -f - <<'EOF'
 apiVersion: bardiup.io/v1alpha1
 kind: Restore
@@ -228,11 +229,12 @@ spec: {backupName: pg, target: {pvcName: pg-restored, storageClassName: csi-host
 EOF
   wait_for app restore/pg '{.status.phase}' Completed 300
   postgres pg-restored pg-restored
+  kubectl -n app logs pg-restored | grep -q "database system was not properly shut down" || fail "restore did not exercise crash recovery"
   rows=$(kubectl -n app exec pg-restored -- psql -U postgres -tAc 'select count(*) from pgbench_accounts')
   [[ "$rows" == 500000 ]] || fail "restored database has $rows accounts, want 500000"
   kubectl -n app exec pg-restored -- pg_amcheck -U postgres --install-missing postgres || fail "pg_amcheck found corruption"
   kubectl -n app delete pod pg pg-restored --wait=false >/dev/null
-  echo "restored PostgreSQL recovered with all 500000 rows and passed amcheck"
+  echo "restored PostgreSQL crash-recovered with all 500000 rows and passed amcheck"
 
   log "Snapshot method"
   kubectl -n app apply -f - <<EOF
