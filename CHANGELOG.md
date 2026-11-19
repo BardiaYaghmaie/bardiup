@@ -2,6 +2,12 @@
 
 All notable changes are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/). The `v1alpha1` API may change in minor releases before `v1`.
 
+## [Unreleased]
+
+### Fixed
+
+- A backup or restore whose mover pod was on a node that went down stayed `Running` forever. It now fails once the Job's deadline passes, so the next run can start.
+
 ## [0.1.0] - 2026-11-19
 
 First public release.

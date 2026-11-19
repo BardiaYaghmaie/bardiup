@@ -549,6 +549,23 @@ func TestBackupJobFailure(t *testing.T) {
 	e.job(t, "backup-bk1")
 }
 
+func TestBackupFailsWhenNodeIsLost(t *testing.T) {
+	e := newEnv(t, newBackup(), pvc("data"), secret())
+	for range 2 {
+		e.run(t, e.bkR, "bk1")
+	}
+	j := e.job(t, "backup-bk1")
+	j.Status.Conditions = append(j.Status.Conditions, batchv1.JobCondition{
+		Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Message: "Job was active longer than specified deadline"})
+	if err := e.c.Status().Update(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	e.run(t, e.bkR, "bk1")
+	if b := e.backup(t); b.Status.Phase != v1alpha1.BackupPhaseFailed || !strings.Contains(b.Status.Message, "deadline") {
+		t.Fatalf("status %+v", b.Status)
+	}
+}
+
 func TestBackupFailsFast(t *testing.T) {
 	block := pvc("data")
 	block.Spec.VolumeMode = ptr.To(corev1.PersistentVolumeBlock)

@@ -213,7 +213,9 @@ func jobOutcome(ctx context.Context, r client.Reader, job *batchv1.Job) (done bo
 		switch c.Type {
 		case batchv1.JobComplete:
 			done, succeeded = true, true
-		case batchv1.JobFailed:
+		case batchv1.JobFailed, batchv1.JobFailureTarget:
+			// FailureTarget is set as soon as the Job has failed; Failed only follows once all its
+			// pods are gone, which never happens while a pod is stuck on a lost node.
 			done, failure = true, c.Message
 		}
 	}
