@@ -67,8 +67,8 @@ jobs:
           KIND_IMAGE: ${{ matrix.image }}
 
   stress:
-    # ~25 minutes: runs when a pull request is merged into main, not on every push to a PR.
-    if: github.event_name == 'push'
+    # ~25 minutes: runs on merges into main and on demand, not on pull requests.
+    if: github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 90
