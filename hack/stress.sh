@@ -226,15 +226,15 @@ if [[ -z "${E2E_KUBECONFIG:-}" ]]; then
   kubectl -n s3 rollout status deploy/toolbox --timeout=180s
   kubectl -n bardiup-system rollout status deploy/bardiup --timeout=180s
   kubectl uncordon "$node" >/dev/null
-  lost_backup() { # lost_backup <name>
+  node_backup() { # node_backup <name> [job-options]
     kubectl -n nodefail apply -f - <<EOF
 apiVersion: bardiup.io/v1alpha1
 kind: Backup
 metadata: {name: $1}
-spec: {pvcName: data-big-0, storage: $(s3_storage nodefail), job: {activeDeadlineSeconds: 120, backoffLimit: 0}}
+spec: {pvcName: data-big-0, storage: $(s3_storage nodefail), job: {${2:-}}}
 EOF
   }
-  lost_backup lost
+  node_backup lost "activeDeadlineSeconds: 120, backoffLimit: 0"
   for _ in $(seq 1 60); do
     [[ "$(kubectl -n nodefail get pod -l job-name=backup-lost -o jsonpath='{.items[0].status.phase}' 2>/dev/null)" == Running ]] && break
     sleep 1
@@ -245,7 +245,7 @@ EOF
   docker start "$node" >/dev/null
   kubectl wait --for=condition=Ready "node/$node" --timeout=300s
   kubectl -n nodefail rollout status sts/big --timeout=300s
-  lost_backup retry
+  node_backup retry
   wait_for nodefail backup/retry '{.status.phase}' Completed 600
 fi
 
