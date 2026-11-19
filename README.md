@@ -127,16 +127,17 @@ The controller and the data mover are the same binary. The controller never touc
 
 ## Lightweight, measured
 
-Numbers from the CI stress run on a 3-node kind cluster (GitHub-hosted runner):
+Measured by the CI stress suite on a 3-node kind cluster on a standard GitHub-hosted runner (ranges span several runs):
 
 | | |
 |---|---|
 | Container image (controller and mover) | **14 MB** compressed, distroless, amd64 + arm64 |
-| Controller memory | **~45 MB RSS**, flat from 1 to 40+ concurrent backups |
-| Controller CPU | **< 1 CPU-second** for 28 parallel backups across 5 namespaces |
+| Controller memory | **45–49 MB RSS**, flat from 1 to 40+ concurrent backups |
+| Controller CPU | **~1 CPU-second** for the entire 13-minute stress suite |
 | Components on nodes between backups | **none** |
-| 28 PVC backups, 5 namespaces, in parallel | **14 s** end to end |
-| 2 GiB incompressible + 100,000 files | backup **43 s**, restore **32 s**, byte-for-byte identical |
+| 28 PVC backups across 5 namespaces, in parallel | **12–14 s** end to end |
+| 2 GiB incompressible + 100,000 files | backup **21–43 s**, restore **21–32 s**, byte-for-byte identical |
+| 20 restores in parallel | **40 s** |
 
 ## Tested for real
 
