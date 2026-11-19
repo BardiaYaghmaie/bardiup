@@ -210,4 +210,43 @@ want=$(kubectl -n fanout exec "${src#data-}" -- sh -c 'cd /data/d && find . -typ
 [[ "$(checksum_pod fanout "$sample" d)" == "$want" ]] || fail "concurrent restore $sample differs from $src"
 
 footprint
+# ---------------------------------------------------------------------------
+if [[ -z "${E2E_KUBECONFIG:-}" ]]; then
+  log "7. Node lost mid-backup: the backup fails cleanly, then works once the node is back"
+  new_ns nodefail
+  s3node=$(kubectl -n s3 get pod -l app=rustfs -o jsonpath='{.items[0].spec.nodeName}')
+  kubectl cordon "$s3node" >/dev/null # land the volume on a node without the S3 server
+  statefulset nodefail big 1 3Gi "[ -f /data/blob ] || head -c 1073741824 /dev/urandom > /data/blob"
+  kubectl -n nodefail rollout status sts/big --timeout=600s
+  kubectl uncordon "$s3node" >/dev/null
+  node=$(kubectl -n nodefail get pod big-0 -o jsonpath='{.spec.nodeName}')
+  kubectl cordon "$node" >/dev/null # move the S3 toolbox and controller off the node we're about to lose
+  kubectl -n s3 rollout restart deploy/toolbox >/dev/null
+  kubectl -n bardiup-system rollout restart deploy/bardiup >/dev/null
+  kubectl -n s3 rollout status deploy/toolbox --timeout=180s
+  kubectl -n bardiup-system rollout status deploy/bardiup --timeout=180s
+  kubectl uncordon "$node" >/dev/null
+  node_backup() { # node_backup <name> [job-options]
+    kubectl -n nodefail apply -f - <<EOF
+apiVersion: bardiup.io/v1alpha1
+kind: Backup
+metadata: {name: $1}
+spec: {pvcName: data-big-0, storage: $(s3_storage nodefail), job: {${2:-}}}
+EOF
+  }
+  node_backup lost "activeDeadlineSeconds: 120, backoffLimit: 0"
+  for _ in $(seq 1 60); do
+    [[ "$(kubectl -n nodefail get pod -l job-name=backup-lost -o jsonpath='{.items[0].status.phase}' 2>/dev/null)" == Running ]] && break
+    sleep 1
+  done
+  docker pause "$node" >/dev/null # unreachable, like a lost node; stop/start would change its IP
+  wait_for nodefail backup/lost '{.status.phase}' Failed 400
+  [[ "$(objects nodefail)" == 0 ]] || fail "a lost backup left objects in the bucket"
+  docker unpause "$node" >/dev/null
+  kubectl wait --for=condition=Ready "node/$node" --timeout=300s
+  kubectl -n nodefail rollout status sts/big --timeout=300s
+  node_backup retry
+  wait_for nodefail backup/retry '{.status.phase}' Completed 600
+fi
+
 log "Stress test passed in $(((SECONDS - T0) / 60))m"
