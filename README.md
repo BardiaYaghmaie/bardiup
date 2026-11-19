@@ -134,7 +134,7 @@ The controller and the data mover are the same binary. The controller never touc
 
 ## Lightweight, measured
 
-Measured by the CI stress suite on a 3-node kind cluster on a standard GitHub-hosted runner (ranges span several runs):
+Measured with the full-size stress suite (`make stress`) on a 3-node kind cluster on a standard GitHub-hosted runner (ranges span several runs). CI runs the same scenarios at a smaller size on every merge.
 
 | | |
 |---|---|

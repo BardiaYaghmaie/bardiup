@@ -81,3 +81,9 @@ jobs:
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - run: ./hack/stress.sh
+        env: # a smaller profile than the make stress defaults, same scenarios
+          STRESS_PVCS: "8"
+          STRESS_TENANTS: "2"
+          STRESS_BIG_MB: "512"
+          STRESS_FILES: "20000"
+          STRESS_CHURN_MIN: "3"
